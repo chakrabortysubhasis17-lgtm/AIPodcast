@@ -5,6 +5,7 @@ bin/
 obj/
 .vs/
 .vscode/
+Storage/
 
 # --- Angular (avatar-renderer & podcast-ui) ---
 **/node_modules/

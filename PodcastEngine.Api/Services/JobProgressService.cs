@@ -1,65 +1,78 @@
 ﻿using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
-using System.IO;
-using System.Text.Json;
 using System.Threading;
 using System.Threading.Channels;
 using System.Threading.Tasks;
 
 namespace PodcastEngine.Api.Services
 {
-    public class JobStatusUpdate
+    public class JobProgressEvent
     {
-        public int? Stage { get; set; }
-        public int? Percent { get; set; }
-        public string? StageMessage { get; set; }
-        public string? Log { get; set; }
-        public string? DownloadUrl { get; set; }
-        public string? Error { get; set; }
-    }
-
-    public class JobSession
-    {
-        public string JobId { get; set; } = string.Empty;
-        public CancellationTokenSource Cts { get; set; } = new();
-        public Channel<string> StreamChannel { get; set; } = Channel.CreateUnbounded<string>();
-        public List<string> History { get; set; } = new();
+        public int Step { get; set; } = 1;
+        public int StepProgress { get; set; } = 0;
+        public int OverallProgress { get; set; } = 0;
+        public string Message { get; set; } = string.Empty;
+        public string Timestamp { get; set; } = DateTime.Now.ToString("HH:mm:ss");
+        public string Status { get; set; } = "running"; // running, completed, failed
     }
 
     public class JobProgressService
     {
-        private readonly ConcurrentDictionary<string, JobSession> _jobs = new();
+        private readonly ConcurrentDictionary<string, Channel<JobProgressEvent>> _channels = new();
+        private readonly ConcurrentDictionary<string, List<JobProgressEvent>> _history = new();
+        private readonly ConcurrentDictionary<string, CancellationTokenSource> _cancellationTokens = new();
 
-        public JobSession CreateJob(string jobId)
+        public CancellationToken CreateJobToken(string jobId)
         {
-            var session = new JobSession { JobId = jobId };
-            _jobs[jobId] = session;
-            return session;
+            var cts = new CancellationTokenSource();
+            _cancellationTokens[jobId] = cts;
+            return cts.Token;
         }
 
-        public JobSession? GetJob(string jobId)
+        public void CancelJob(string jobId)
         {
-            _jobs.TryGetValue(jobId, out var session);
-            return session;
-        }
-
-        public void Publish(string jobId, JobStatusUpdate update)
-        {
-            if (_jobs.TryGetValue(jobId, out var session))
+            if (_cancellationTokens.TryGetValue(jobId, out var cts))
             {
-                string json = JsonSerializer.Serialize(update, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
-                session.History.Add(json);
-                session.StreamChannel.Writer.TryWrite(json);
+                cts.Cancel();
             }
         }
 
-        public void Cancel(string jobId)
+        public ChannelReader<JobProgressEvent> GetReader(string jobId)
         {
-            if (_jobs.TryGetValue(jobId, out var session))
+            var channel = _channels.GetOrAdd(jobId, _ => Channel.CreateUnbounded<JobProgressEvent>(new UnboundedChannelOptions
             {
-                session.Cts.Cancel();
-                Publish(jobId, new JobStatusUpdate { Error = "Render canceled by user." });
+                SingleWriter = false,
+                SingleReader = false
+            }));
+            return channel.Reader;
+        }
+
+        public List<JobProgressEvent> GetHistory(string jobId)
+        {
+            return _history.TryGetValue(jobId, out var list) ? list : new List<JobProgressEvent>();
+        }
+
+        public void Report(string jobId, int step, int stepProgress, int overallProgress, string message, string status = "running")
+        {
+            var ev = new JobProgressEvent
+            {
+                Step = step,
+                StepProgress = Math.Clamp(stepProgress, 0, 100),
+                OverallProgress = Math.Clamp(overallProgress, 0, 100),
+                Message = message,
+                Status = status
+            };
+
+            var list = _history.GetOrAdd(jobId, _ => new List<JobProgressEvent>());
+            lock (list) list.Add(ev);
+
+            var channel = _channels.GetOrAdd(jobId, _ => Channel.CreateUnbounded<JobProgressEvent>());
+            channel.Writer.TryWrite(ev);
+
+            if (status == "completed" || status == "failed")
+            {
+                channel.Writer.TryComplete();
             }
         }
     }

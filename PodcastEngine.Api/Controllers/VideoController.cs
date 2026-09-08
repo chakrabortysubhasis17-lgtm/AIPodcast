@@ -1,99 +1,72 @@
 ﻿using System;
-using System.Collections.Generic;
 using System.IO;
-using System.Text;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using PodcastEngine.Api.Common;
 using PodcastEngine.Api.Services;
 
 namespace PodcastEngine.Api.Controllers
 {
-    public class StartJobRequest
-    {
-        public string Script { get; set; } = string.Empty;
-        public List<IFormFile>? Overlays { get; set; }
-    }
-
     [ApiController]
-    [Route("api/[controller]")]
+    [Route("api/video")]
     public class VideoController : ControllerBase
     {
-        private readonly PodcastPipelineService _pipelineService;
-        private readonly JobProgressService _progressService;
-
-        public VideoController(PodcastPipelineService pipelineService, JobProgressService progressService)
+        private readonly PodcastPipelineService _pipeline;
+        private readonly JobProgressService _progress;
+        private static readonly JsonSerializerOptions JsonOptions = new()
         {
-            _pipelineService = pipelineService;
-            _progressService = progressService;
+            PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+        };
+
+        public VideoController(PodcastPipelineService pipeline, JobProgressService progress)
+        {
+            _pipeline = pipeline;
+            _progress = progress;
         }
 
+        [HttpPost("start")]
         [HttpPost("start-job")]
-        [Consumes("multipart/form-data")]
-        public async Task<IActionResult> StartJob([FromForm] StartJobRequest request)
+        [RequestSizeLimit(100_000_000)]
+        public async Task<IActionResult> Start([FromForm] string script, [FromForm] IFormFileCollection? files)
         {
-            if (string.IsNullOrWhiteSpace(request.Script))
-            {
-                return BadRequest(new { message = "Script cannot be empty." });
-            }
-
-            string jobId = Guid.NewGuid().ToString("N");
-            var session = _progressService.CreateJob(jobId);
-
-            string storageBase = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Storage", jobId);
-            string overlaysDir = Path.Combine(storageBase, "overlays");
+            string jobId = Guid.NewGuid().ToString("N")[..8];
+            string sessionDir = Path.Combine(PathHelper.StorageBase, jobId);
+            string overlaysDir = Path.Combine(sessionDir, "overlays");
             Directory.CreateDirectory(overlaysDir);
 
-            if (request.Overlays != null && request.Overlays.Count > 0)
+            if (files != null)
             {
-                foreach (var file in request.Overlays)
+                foreach (var file in files)
                 {
                     if (file.Length > 0)
                     {
-                        string safeFileName = Path.GetFileName(file.FileName);
-                        string destPath = Path.Combine(overlaysDir, safeFileName);
-                        using var stream = new FileStream(destPath, FileMode.Create);
-                        await file.CopyToAsync(stream);
+                        string savePath = Path.Combine(overlaysDir, file.FileName);
+                        using var fs = new FileStream(savePath, FileMode.Create);
+                        await file.CopyToAsync(fs);
                     }
                 }
             }
+
+            var jobToken = _progress.CreateJobToken(jobId);
 
             _ = Task.Run(async () =>
             {
                 try
                 {
-                    _progressService.Publish(jobId, new JobStatusUpdate { Stage = 1, Percent = 10, StageMessage = "Synthesizing voice chunks...", Log = "[TTS] Generating speech masters." });
-                    await Task.Delay(1000, session.Cts.Token);
-
-                    _progressService.Publish(jobId, new JobStatusUpdate { Stage = 2, Percent = 35, StageMessage = "Running Rhubarb phonetic lip-sync...", Log = "[Rhubarb] Generating phonemes.json" });
-                    await Task.Delay(1000, session.Cts.Token);
-
-                    _progressService.Publish(jobId, new JobStatusUpdate { Stage = 3, Percent = 60, StageMessage = "Mastering audio & ducking...", Log = "[FFmpeg] Sidechain compression applied." });
-                    await Task.Delay(1000, session.Cts.Token);
-
-                    _progressService.Publish(jobId, new JobStatusUpdate { Stage = 4, Percent = 85, StageMessage = "Rendering Three.js WebGL canvas...", Log = "[Three.js] Pipe to libx264 ultrafast." });
-
-                    string finalPath = await _pipelineService.ProcessPodcastJobAsync(jobId, request.Script, session.Cts.Token);
-
-                    _progressService.Publish(jobId, new JobStatusUpdate
-                    {
-                        Stage = 4,
-                        Percent = 100,
-                        StageMessage = "Render Complete!",
-                        DownloadUrl = $"/api/video/download/{jobId}",
-                        Log = "Job completed successfully."
-                    });
+                    await _pipeline.ExecutePipelineAsync(jobId, script, sessionDir, jobToken);
                 }
                 catch (OperationCanceledException)
                 {
-                    _progressService.Publish(jobId, new JobStatusUpdate { Error = "Job canceled." });
+                    _progress.Report(jobId, 4, 0, 100, "Render Halted: Job canceled by user.", "failed");
                 }
                 catch (Exception ex)
                 {
-                    _progressService.Publish(jobId, new JobStatusUpdate { Error = ex.Message, Log = $"[FATAL] {ex.Message}" });
+                    _progress.Report(jobId, 4, 0, 100, $"Fatal Error: {ex.Message}", "failed");
                 }
-            });
+            }, CancellationToken.None);
 
             return Ok(new { jobId });
         }
@@ -105,56 +78,38 @@ namespace PodcastEngine.Api.Controllers
             Response.Headers.Append("Cache-Control", "no-cache");
             Response.Headers.Append("Connection", "keep-alive");
 
-            var session = _progressService.GetJob(jobId);
-            if (session == null)
-            {
-                byte[] notFoundBytes = Encoding.UTF8.GetBytes("data: {\"error\":\"Job not found\"}\n\n");
-                await Response.Body.WriteAsync(notFoundBytes, ct);
-                return;
-            }
+            var reader = _progress.GetReader(jobId);
 
             try
             {
-                // Flush historical buffered updates first
-                foreach (var pastEvent in session.History)
+                while (await reader.WaitToReadAsync(ct))
                 {
-                    byte[] bytes = Encoding.UTF8.GetBytes($"data: {pastEvent}\n\n");
-                    await Response.Body.WriteAsync(bytes, ct);
-                }
-                await Response.Body.FlushAsync(ct);
-
-                // Stream live updates safely
-                var reader = session.StreamChannel.Reader;
-                while (!ct.IsCancellationRequested && await reader.WaitToReadAsync(ct))
-                {
-                    while (reader.TryRead(out var msg))
+                    while (reader.TryRead(out var ev))
                     {
-                        byte[] bytes = Encoding.UTF8.GetBytes($"data: {msg}\n\n");
-                        await Response.Body.WriteAsync(bytes, ct);
+                        string json = JsonSerializer.Serialize(ev, JsonOptions);
+                        await Response.WriteAsync($"data: {json}\n\n", ct);
                         await Response.Body.FlushAsync(ct);
                     }
                 }
             }
-            catch (OperationCanceledException)
-            {
-                // Client closed browser or EventSource disconnected cleanly
-            }
+            catch (OperationCanceledException) { }
         }
 
         [HttpPost("cancel/{jobId}")]
-        public IActionResult CancelJob(string jobId)
+        public IActionResult Cancel(string jobId)
         {
-            _progressService.Cancel(jobId);
-            return Ok(new { status = "Canceled" });
+            _progress.CancelJob(jobId);
+            return Ok(new { status = "canceled" });
         }
 
         [HttpGet("download/{jobId}")]
-        public IActionResult DownloadVideo(string jobId)
+        public IActionResult Download(string jobId)
         {
-            string filePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Storage", jobId, "podcast.mp4");
-            if (!System.IO.File.Exists(filePath)) return NotFound();
-            return PhysicalFile(filePath, "video/mp4", enableRangeProcessing: true);
+            string mp4 = Path.Combine(PathHelper.StorageBase, jobId, "podcast.mp4");
+            if (!System.IO.File.Exists(mp4)) return NotFound("Rendered video not found.");
+            return PhysicalFile(mp4, "video/mp4", enableRangeProcessing: true);
         }
     }
 }
+
 

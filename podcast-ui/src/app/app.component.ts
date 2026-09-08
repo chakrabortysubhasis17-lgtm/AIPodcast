@@ -319,26 +319,26 @@ Hey guys, welcome back to the podcast!
         return;
       }
 
-      if (data.stage !== undefined && data.stage > 0) {
-        this.currentStage = data.stage;
+      if ((data.step ?? data.stage) !== undefined && (data.step ?? data.stage) > 0) {
+        this.currentStage = (data.step ?? data.stage);
       }
 
-      if (data.percent !== undefined && data.percent >= 0) {
-        this.progressPercent = data.percent;
+      if ((data.overallProgress ?? data.percent) !== undefined && (data.overallProgress ?? data.percent) >= 0) {
+        this.progressPercent = (data.overallProgress ?? data.percent);
       }
 
-      if (data.stageMessage) {
-        this.currentStepText = data.stageMessage;
+      if ((data.message ?? data.stageMessage)) {
+        this.currentStepText = (data.message ?? data.stageMessage);
       }
 
-      if (data.log) {
+      if ((data.message ?? data.log)) {
         const now = new Date();
         const timeStr = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')}`;
         this.logs.push({
-          text: data.log,
+          text: (data.message ?? data.log),
           time: timeStr,
-          isError: data.log.includes('Error') || data.log.includes('FATAL'),
-          isNotice: data.log.startsWith('[TTS]') || data.log.startsWith('[Rhubarb]')
+          isError: (data.message ?? data.log).includes('Error') || (data.message ?? data.log).includes('FATAL'),
+          isNotice: (data.message ?? data.log).startsWith('[TTS]') || (data.message ?? data.log).startsWith('[Rhubarb]')
         });
 
         setTimeout(() => {
@@ -366,7 +366,7 @@ Hey guys, welcome back to the podcast!
   }
 
   copyLogs() {
-    const raw = this.logs.map(l => `[${l.time}] ${l.text}`).join('\n');
+    const raw = this.logs.map((l: any) => `[${l.time}] ${l.text}`).join('\n');
     navigator.clipboard.writeText(raw);
   }
 
@@ -387,3 +387,4 @@ Hey guys, welcome back to the podcast!
     this.finishProcess();
   }
 }
+

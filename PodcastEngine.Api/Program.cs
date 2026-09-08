@@ -23,9 +23,23 @@ builder.Services.AddCors(options => {
               .AllowCredentials();
     });
 });
+builder.WebHost.ConfigureKestrel(serverOptions =>
+{
+    serverOptions.Limits.MaxRequestBodySize = null; // Unlimited payload size
+});
+builder.Services.Configure<Microsoft.AspNetCore.Http.Features.FormOptions>(options =>
+{
+    options.ValueLengthLimit = int.MaxValue;
+    options.MultipartBodyLengthLimit = long.MaxValue;
+    options.MemoryBufferThreshold = int.MaxValue;
+});
+
+builder.Services.AddSingleton<PodcastEngine.Api.Services.JobProgressService>();
 var app = builder.Build();
 
 app.UseCors();
 app.MapControllers();
 
 app.Run();
+
+

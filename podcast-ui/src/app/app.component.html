@@ -1,0 +1,134 @@
+﻿<div class="studio-container">
+  <header class="studio-header">
+    <div class="header-left">
+      <div class="logo">🎙️ AI Podcast Studio Pro</div>
+      <div class="badge">D3D11 Canvas Pipe • v2.4</div>
+    </div>
+    <div class="header-right" *ngIf="isRendering">
+      <span class="live-dot"></span> Active Broadcast Session
+    </div>
+  </header>
+
+  <!-- 1. FULL WIDTH: Podcast Script Directive -->
+  <section class="section-card script-card">
+    <div class="card-title">Podcast Script Directive</div>
+
+    <div class="editor-container">
+      <div class="editor-backdrop" #editorBackdrop [innerHTML]="highlightedScript"></div>
+      <textarea
+        [(ngModel)]="scriptText"
+        (input)="onScriptInput()"
+        (scroll)="syncEditorScroll($event)"
+        class="editor-textarea"
+        spellcheck="false"
+        placeholder="Enter script with directives like [Cam: wide], [Emotion: joy], [Show: 'crest.png']..."
+      ></textarea>
+    </div>
+
+    <!-- DYNAMIC OVERLAY ATTACHMENT SLOTS (Appears only if [Show: "..."] exists) -->
+    <div class="dynamic-overlay-section" *ngIf="requiredOverlays.length > 0">
+      <div class="overlay-section-header">
+        <span class="header-icon">🖼️</span>
+        <span>Detected {{ requiredOverlays.length }} Required Scene {{ requiredOverlays.length === 1 ? 'Overlay' : 'Overlays' }}:</span>
+      </div>
+
+      <div class="overlay-slots-grid">
+        <div class="overlay-slot" *ngFor="let item of requiredOverlays; let i = index" [class.ready]="item.file">
+          <div class="slot-info">
+            <span class="slot-badge">#{{ i + 1 }}</span>
+            <span class="slot-label">Attach:</span>
+            <code class="slot-filename">{{ item.targetName }}</code>
+          </div>
+
+          <div class="slot-action">
+            <span class="slot-status" *ngIf="item.file">✓ {{ item.file.name }}</span>
+            <span class="slot-status missing" *ngIf="!item.file">⚠️ File Missing</span>
+
+            <label class="btn-browse">
+              {{ item.file ? 'Change' : 'Browse File' }}
+              <input type="file" (change)="onSingleFileSelected($event, i)" style="display:none" accept="image/*" />
+            </label>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="script-toolbar">
+      <div class="action-buttons">
+        <button
+          class="btn-generate"
+          (click)="generatePodcast()"
+          [disabled]="isRendering || !areAllOverlaysAttached()"
+        >
+          <span *ngIf="!isRendering && areAllOverlaysAttached()">🚀 Generate YouTube MP4</span>
+          <span *ngIf="!isRendering && !areAllOverlaysAttached()">⚠️ Attach Missing Overlays Above</span>
+          <span *ngIf="isRendering">⚡ Rendering Episode...</span>
+        </button>
+
+        <button class="btn-cancel" (click)="cancelRender()" *ngIf="isRendering">
+          ⏹️ Cancel
+        </button>
+      </div>
+    </div>
+  </section>
+
+  <!-- 2. FULL WIDTH: Stepper, Dual Progress Bars, Execution Logs Beneath -->
+  <section class="section-card logging-card">
+    <div class="stepper-grid">
+      <div *ngFor="let s of steps" class="step-card" [class.active]="currentStep === s.id && isRendering" [class.completed]="currentStep > s.id || renderStatus === 'completed'">
+        <span class="step-check" *ngIf="currentStep > s.id || renderStatus === 'completed'">✓ </span>{{ s.title }}
+      </div>
+    </div>
+
+    <div class="alert-box" *ngIf="renderStatus === 'failed'">
+      ⚠️ {{ statusMessage }}
+    </div>
+
+    <!-- Dual Progress Loaders -->
+    <div class="progress-section" *ngIf="isRendering || renderStatus === 'completed'">
+      <div class="progress-row">
+        <span class="progress-title">Overall Broadcast Progress</span>
+        <span class="progress-number">{{ overallProgress }}%</span>
+      </div>
+      <div class="progress-bar-track">
+        <div class="progress-bar-fill overall" [style.width.%]="overallProgress"></div>
+      </div>
+
+      <div class="progress-row sub">
+        <span class="progress-title">{{ getStepTitle(currentStep) }} Progress</span>
+        <span class="progress-number">{{ stepProgress }}%</span>
+      </div>
+      <div class="progress-bar-track sub">
+        <div class="progress-bar-fill step" [style.width.%]="stepProgress"></div>
+      </div>
+
+      <div class="progress-meta">
+        <span>Pipeline: Google TTS → Rhubarb Visemes → D3D11 Canvas Pipe → FFmpeg</span>
+        <span>Elapsed: {{ elapsedSeconds }}s</span>
+      </div>
+    </div>
+
+    <!-- Live Execution Logs Terminal -->
+    <div class="terminal-shell">
+      <div class="terminal-bar">
+        <span class="terminal-title">LIVE EXECUTION LOGS:</span>
+        <button class="btn-copy" (click)="copyLogs()">📋 Copy Logs</button>
+      </div>
+      <div class="terminal-screen" #logTerminal>
+        <div class="log-row" *ngFor="let l of logs">
+          <span class="log-time">[{{ l.timestamp }}]</span>
+          <span class="log-text">{{ l.message }}</span>
+        </div>
+        <div class="log-row idle" *ngIf="logs.length === 0">
+          Awaiting pipeline execution...
+        </div>
+      </div>
+    </div>
+
+    <!-- Finished Video Preview Master -->
+    <div class="video-preview-wrapper" *ngIf="videoUrl">
+      <div class="card-title">🎬 Rendered Master Preview</div>
+      <video [src]="videoUrl" controls autoplay class="studio-video-player"></video>
+    </div>
+  </section>
+</div>
