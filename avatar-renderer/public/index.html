@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    body { margin: 0; background: #0c101c; overflow: hidden; }
+    canvas { width: 1920px; height: 1080px; display: block; }
+  </style>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://unpkg.com/three@0.169.0/build/three.module.js",
+        "three/addons/": "https://unpkg.com/three@0.169.0/examples/jsm/",
+        "@pixiv/three-vrm": "https://unpkg.com/@pixiv/three-vrm@3.3.0/lib/three-vrm.module.js"
+      }
+    }
+  </script>
+</head>
+<body>
+  <script type="module">
+    import * as THREE from 'three';
+    import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+    import { VRMLoaderPlugin, VRMUtils } from '@pixiv/three-vrm';
+
+    window.avatarLoaded = false;
+    window.mouthCues = [];
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, preserveDrawingBuffer: true });
+    renderer.setSize(1920, 1080);
+    renderer.setPixelRatio(1);
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    document.body.appendChild(renderer.domElement);
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x0c101c);
+
+    const camera = new THREE.PerspectiveCamera(30, 1920 / 1080, 0.1, 20.0);
+    camera.position.set(0.0, 1.4, 1.2);
+    camera.lookAt(0.0, 1.35, 0.0);
+
+    const light = new THREE.DirectionalLight(0xffffff, Math.PI);
+    light.position.set(1.0, 2.0, 1.5);
+    scene.add(light);
+
+    const ambient = new THREE.AmbientLight(0xffffff, 0.6);
+    scene.add(ambient);
+
+    let currentVrm = null;
+    const loader = new GLTFLoader();
+    loader.register((parser) => new VRMLoaderPlugin(parser));
+
+    loader.load(
+      '/avatar.vrm',
+      (gltf) => {
+        const vrm = gltf.userData.vrm;
+        VRMUtils.removeUnnecessaryVertices(gltf.scene);
+        VRMUtils.removeUnnecessaryJoints(gltf.scene);
+
+        scene.add(vrm.scene);
+        currentVrm = vrm;
+        window.avatarLoaded = true;
+        renderer.render(scene, camera);
+        console.log("Avatar loaded successfully!");
+      },
+      undefined,
+      (error) => {
+        console.error("VRM Load Error: ", error);
+      }
+    );
+
+    // Map Rhubarb phoneme shapes (A, B, C, D, E, F, G, H, X) to VRM blendshapes (aa, ih, ou, ee, oh)
+    const shapeMap = {
+      'A': 'aa',
+      'B': 'ih',
+      'C': 'ih',
+      'D': 'aa',
+      'E': 'ee',
+      'F': 'ou',
+      'G': 'ee',
+      'H': 'oh',
+      'X': null
+    };
+
+    window.updateAvatarFrame = (currentTime) => {
+      if (!currentVrm || !currentVrm.expressionManager) {
+        renderer.render(scene, camera);
+        return;
+      }
+
+      // Reset standard phonemes
+      ['aa', 'ih', 'ou', 'ee', 'oh'].forEach(name => {
+        try { currentVrm.expressionManager.setValue(name, 0); } catch (_) {}
+      });
+
+      // Find active mouth cue
+      const activeCue = window.mouthCues.find(c => currentTime >= c.start && currentTime <= c.end);
+      if (activeCue && shapeMap[activeCue.value]) {
+        try {
+          currentVrm.expressionManager.setValue(shapeMap[activeCue.value], 1.0);
+        } catch (_) {}
+      }
+
+      currentVrm.expressionManager.update();
+      renderer.render(scene, camera);
+    };
+  </script>
+</body>
+</html>

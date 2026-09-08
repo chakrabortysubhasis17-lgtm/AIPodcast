@@ -1,0 +1,17 @@
+# --- .NET (PodcastEngine.Api) ---
+[Dd]ebug/
+[Rr]elease/
+bin/
+obj/
+.vs/
+.vscode/
+
+# --- Angular (avatar-renderer & podcast-ui) ---
+**/node_modules/
+**/dist/
+**/.angular/
+npm-debug.log*
+
+# --- OS Files ---
+.DS_Store
+Thumbs.db

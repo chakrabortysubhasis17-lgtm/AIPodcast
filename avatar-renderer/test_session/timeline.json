@@ -1,0 +1,6 @@
+[
+  { "time": 0.0, "type": "cam", "value": "mid" },
+  { "time": 0.0, "type": "emotion", "value": "joy" },
+  { "time": 2.0, "type": "cam", "value": "close-up" },
+  { "time": 2.0, "type": "emotion", "value": "smug" }
+]
