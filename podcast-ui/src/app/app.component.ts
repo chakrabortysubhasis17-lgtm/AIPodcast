@@ -96,7 +96,7 @@ import { AssetInspectorManager } from './components/asset-inspector';
         </button>
       </div>
 
-      <!-- Stepper & Progress Dashboard -->
+      <!-- Stepper & Dual Progress Dashboard -->
       <div *ngIf="isLoading || progressPercent > 0 || errorMessage" style="margin-top: 24px; padding: 22px; background: #0f172a; border: 1px solid #38bdf8; border-radius: 10px;">
 
         <!-- Synchronized 4-Stage Stepper -->
@@ -118,26 +118,49 @@ import { AssetInspectorManager } from './components/asset-inspector';
           </div>
         </div>
 
-        <!-- Left Stage Details & Right Overall Percentage -->
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+        <!-- 1. OVERALL PROGRESS BAR -->
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
           <div style="display: flex; align-items: center; gap: 10px;">
             <div *ngIf="isLoading" class="spinner"></div>
             <span *ngIf="!isLoading && errorMessage" style="color: #ef4444; font-size: 18px;">⚠️</span>
-            <span [style.color]="errorMessage ? '#ef4444' : '#38bdf8'" style="font-weight: 600; font-size: 15px;">
+            <span [style.color]="errorMessage ? '#ef4444' : '#38bdf8'" style="font-weight: 600; font-size: 14px;">
               {{ errorMessage ? 'Render Halted: ' + errorMessage : currentStepText }}
             </span>
           </div>
-          <span [style.color]="errorMessage ? '#ef4444' : '#38bdf8'" style="font-size: 22px; font-weight: 700; font-family: monospace;">
+          <span [style.color]="errorMessage ? '#ef4444' : '#38bdf8'" style="font-size: 20px; font-weight: 700; font-family: monospace;">
             {{ progressPercent }}%
           </span>
         </div>
 
-        <!-- Visual Bar -->
-        <div style="width: 100%; height: 10px; background: #334155; border-radius: 5px; overflow: hidden; margin-top: 12px;">
+        <div style="width: 100%; height: 10px; background: #334155; border-radius: 5px; overflow: hidden; margin-bottom: 16px;">
           <div
             [style.width.%]="progressPercent"
             [style.background]="errorMessage ? '#dc2626' : 'linear-gradient(90deg, #0284c7, #38bdf8)'"
             style="height: 100%; border-radius: 5px; transition: width 0.2s ease-out;">
+          </div>
+        </div>
+
+        <!-- 2. STEP PROGRESS BAR WITH ESTIMATED TIME LEFT -->
+        <div *ngIf="isLoading && progressPercent < 100" style="background: rgba(15, 23, 42, 0.7); border: 1px solid #1e293b; border-radius: 8px; padding: 12px; margin-bottom: 12px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <span style="font-size: 13px; font-weight: 600; color: #e2e8f0;">
+                Stage {{ currentStage }}: {{ getStageTitle(currentStage) }}
+              </span>
+              <span *ngIf="stepEtaText" style="font-size: 11px; padding: 2px 7px; border-radius: 4px; background: rgba(245, 158, 11, 0.15); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.3);">
+                ⏳ {{ stepEtaText }}
+              </span>
+            </div>
+            <span style="font-size: 13px; font-weight: 700; color: #34d399; font-family: monospace;">
+              {{ stepProgress }}%
+            </span>
+          </div>
+
+          <div style="width: 100%; height: 6px; background: #1e293b; border-radius: 3px; overflow: hidden;">
+            <div
+              [style.width.%]="stepProgress"
+              style="height: 100%; background: linear-gradient(90deg, #06b6d4, #10b981); border-radius: 3px; transition: width 0.25s ease-out;">
+            </div>
           </div>
         </div>
 
@@ -160,7 +183,7 @@ import { AssetInspectorManager } from './components/asset-inspector';
         </div>
       </div>
 
-      <!-- Result Video -->
+      <!-- Result Video Player -->
       <div *ngIf="downloadUrl" style="margin-top: 36px; border-top: 1px solid #334155; padding-top: 24px;">
         <h3 style="margin: 0 0 14px 0; color: #4ade80;">✅ Video Generated Successfully</h3>
         <video [src]="downloadUrl" controls autoplay width="100%" style="border-radius: 8px; background: black; max-height: 480px;"></video>
@@ -192,43 +215,54 @@ export class AppComponent implements OnDestroy {
 
   public inspector = new AssetInspectorManager();
 
-  scriptText: string = `[Cam: Mid] [Emotion: Joy]
+  scriptText: string = `[LowerThird: "Welcome to beingabong"] [SFX: Whoosh]
+[Cam: Mid] [Emotion: Joy]
 Hey guys, welcome back to the podcast!
 [Pause: 1.0s]
 [Cam: Slow Zoom] [Emotion: Serious] [Gesture: Nod]
-ফুটবল অনেকের কাছে just ৯০ মিনিটের একটা game। But কিছু club-এর কাছে ফুটবল মানে বেঁচে থাকার লড়াই, আত্মসম্মান আর pure emotion।
+ফুটবল অনেকের কাছে just ৯০ মিনিটের একটা game। But কিছু ক্লাবের কাছে ফুটবল মানে বেঁচে থাকার লড়াই, আত্মসম্মান আর pure emotion।
 [Pause: 1.2s]
-[Show: "east_bengal_crest.png" at right]
 [Cam: Close-up] [Emotion: Smug]
-আজ আমরা কথা বলব Maidan-এর এমন একটা club-কে নিয়ে, যার ইতিহাস কোনো Hollywood cinema-র চেয়ে কম নয়—East Bengal FC!
+আজ আমরা কথা বলব ময়দানের এমন একটা ক্লাবকে নিয়ে, যার ইতিহাস কোনো Hollywood সিনেমার চেয়ে কম নয়—East Bengal FC!
 [Pause: 0.8s]
-[Hide: Overlay]
 [Cam: Shake] [Emotion: Surprised]
-একটা চরম অপমান আর open discrimination থেকে কীভাবে এই club-এর জন্ম হয়েছিল?`;
+একটা চরম অপমান আর open discrimination থেকে কীভাবে এই ক্লাবের জন্ম হয়েছিল?`;
 
   highlightedContent: SafeHtml = '';
   isLoading: boolean = false;
   currentStage: number = 0;
   progressPercent: number = 0;
+  stepProgress: number = 0;
+  stepEtaText: string = '';
   currentStepText: string = '';
   elapsedSeconds: number = 0;
   logs: Array<{ text: string; time: string; isError: boolean; isNotice: boolean }> = [];
   errorMessage: string | null = null;
   downloadUrl: string | null = null;
 
+  private stageStartTime: number = 0;
   private currentJobId: string | null = null;
   private timerInterval: any = null;
   private eventSource: EventSource | null = null;
+  private isCompleted: boolean = false;
 
   constructor(private http: HttpClient, private sanitizer: DomSanitizer, private cdr: ChangeDetectorRef) {
     this.updateHighlight();
   }
 
+  getStageTitle(stageNum: number): string {
+    switch (stageNum) {
+      case 1: return 'Voice Synthesis';
+      case 2: return 'Rhubarb Visemes';
+      case 3: return 'Audio Ducking';
+      case 4: return '3D WebGL Composite';
+      default: return 'Active Stage';
+    }
+  }
+
   updateHighlight() {
-    // 1. Re-inspect script for required overlay assets
     this.inspector.inspectScript(this.scriptText);
 
-    // 2. Syntax highlighting for all directive tags
     const escaped = this.scriptText
       .replace(/&/g, '&amp;')
       .replace(/</g, '&lt;')
@@ -261,12 +295,32 @@ Hey guys, welcome back to the podcast!
     return '#64748b';
   }
 
+  private calculateStepEta(progress: number) {
+    if (progress <= 1) {
+      this.stepEtaText = 'Estimating...';
+      return;
+    }
+    if (progress >= 100) {
+      this.stepEtaText = 'Completed';
+      return;
+    }
+
+    const elapsedMs = Date.now() - this.stageStartTime;
+    const estimatedTotalMs = (elapsedMs / progress) * 100;
+    const remainingSec = Math.max(0, Math.round((estimatedTotalMs - elapsedMs) / 1000));
+    this.stepEtaText = `~${remainingSec}s remaining`;
+  }
+
   generateVideo() {
     if (this.inspector.isGenerateLocked) return;
 
     this.isLoading = true;
+    this.isCompleted = false;
     this.currentStage = 1;
     this.progressPercent = 0;
+    this.stepProgress = 0;
+    this.stepEtaText = '';
+    this.stageStartTime = Date.now();
     this.logs = [];
     this.errorMessage = null;
     this.downloadUrl = null;
@@ -279,7 +333,6 @@ Hey guys, welcome back to the podcast!
       this.cdr.detectChanges();
     }, 1000);
 
-    // Construct FormData to support both script text and attached overlay images
     const payload = new FormData();
     payload.append('script', this.scriptText);
     this.inspector.appendToFormData(payload);
@@ -311,54 +364,88 @@ Hey guys, welcome back to the podcast!
     this.eventSource = new EventSource(`http://localhost:5000/api/video/stream/${jobId}`);
 
     this.eventSource.onmessage = (event) => {
-      const data = JSON.parse(event.data);
+      try {
+        const data = JSON.parse(event.data);
 
-      if (data.error) {
-        this.errorMessage = data.error;
-        this.finishProcess();
-        return;
-      }
+        if (data.error) {
+          this.errorMessage = data.error;
+          this.finishProcess();
+          return;
+        }
 
-      if ((data.step ?? data.stage) !== undefined && (data.step ?? data.stage) > 0) {
-        this.currentStage = (data.step ?? data.stage);
-      }
-
-      if ((data.overallProgress ?? data.percent) !== undefined && (data.overallProgress ?? data.percent) >= 0) {
-        this.progressPercent = (data.overallProgress ?? data.percent);
-      }
-
-      if ((data.message ?? data.stageMessage)) {
-        this.currentStepText = (data.message ?? data.stageMessage);
-      }
-
-      if ((data.message ?? data.log)) {
-        const now = new Date();
-        const timeStr = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')}`;
-        this.logs.push({
-          text: (data.message ?? data.log),
-          time: timeStr,
-          isError: (data.message ?? data.log).includes('Error') || (data.message ?? data.log).includes('FATAL'),
-          isNotice: (data.message ?? data.log).startsWith('[TTS]') || (data.message ?? data.log).startsWith('[Rhubarb]')
-        });
-
-        setTimeout(() => {
-          if (this.logContainer) {
-            this.logContainer.nativeElement.scrollTop = this.logContainer.nativeElement.scrollHeight;
+        const stepVal = data.step ?? data.stage;
+        if (stepVal !== undefined && stepVal > 0) {
+          if (stepVal !== this.currentStage) {
+            this.currentStage = stepVal;
+            this.stepProgress = 0;
+            this.stageStartTime = Date.now();
+            this.stepEtaText = 'Estimating...';
           }
-        }, 10);
-      }
+        }
 
-      if (data.downloadUrl) {
-        this.downloadUrl = `http://localhost:5000${data.downloadUrl}?t=${Date.now()}`;
-        this.progressPercent = 100;
-        this.finishProcess();
-      }
+        const stepProgVal = data.stepProgress ?? data.stepprogress;
+        if (stepProgVal !== undefined && stepProgVal >= 0) {
+          this.stepProgress = stepProgVal;
+          this.calculateStepEta(stepProgVal);
+        }
 
-      this.cdr.detectChanges();
+        const overallVal = data.overallProgress ?? data.percent ?? data.overallprogress;
+        if (overallVal !== undefined && overallVal >= 0) {
+          this.progressPercent = overallVal;
+        }
+
+        const msg = data.message ?? data.stageMessage;
+        if (msg) {
+          this.currentStepText = msg;
+        }
+
+        const logMsg = data.message ?? data.log;
+        if (logMsg) {
+          const now = new Date();
+          const timeStr = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')}`;
+          this.logs.push({
+            text: logMsg,
+            time: timeStr,
+            isError: logMsg.includes('Error') || logMsg.includes('FATAL'),
+            isNotice: logMsg.startsWith('[TTS]') || logMsg.startsWith('[Rhubarb]')
+          });
+
+          setTimeout(() => {
+            if (this.logContainer) {
+              this.logContainer.nativeElement.scrollTop = this.logContainer.nativeElement.scrollHeight;
+            }
+          }, 10);
+        }
+
+        // Completion only occurs when FFmpeg explicitly reports completion or status is completed
+        const isFinished = data.status === 'completed' || 
+                           (msg && msg.includes('Render Complete'));
+
+        if (data.downloadUrl) {
+          this.isCompleted = true;
+          this.downloadUrl = `http://localhost:5000${data.downloadUrl}?t=${Date.now()}`;
+          this.finishProcess();
+        } else if (isFinished) {
+          this.isCompleted = true;
+          const activeId = this.currentJobId || data.jobId || jobId;
+          setTimeout(() => {
+            this.downloadUrl = `http://localhost:5000/api/video/download/${activeId}?t=${Date.now()}`;
+            this.finishProcess();
+            this.cdr.detectChanges();
+          }, 400);
+        } else if (data.status === 'error') {
+          this.errorMessage = data.message || 'Rendering failed.';
+          this.finishProcess();
+        }
+
+        this.cdr.detectChanges();
+      } catch (err) {
+        console.error('SSE JSON parse error:', err);
+      }
     };
 
     this.eventSource.onerror = () => {
-      if (this.isLoading && !this.downloadUrl && this.progressPercent === 0) {
+      if (this.isLoading && !this.downloadUrl && !this.isCompleted) {
         this.errorMessage = 'Connection closed or lost with server.';
         this.finishProcess();
       }
@@ -387,4 +474,3 @@ Hey guys, welcome back to the podcast!
     this.finishProcess();
   }
 }
-
