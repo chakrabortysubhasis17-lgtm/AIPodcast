@@ -532,8 +532,17 @@ const readJsonClean = (p) => {
         '-pix_fmt', 'yuv420p',
         '-c:a', 'aac',
         '-b:a', '192k',
+        '-movflags', '+faststart',
         outputPath
     ]);
+
+    // Drain stderr & stdout continuously to prevent OS 64KB pipe buffer deadlock on large renders
+    let ffmpegErr = '';
+    ffmpeg.stderr.on('data', chunk => {
+        ffmpegErr += chunk.toString();
+        if (ffmpegErr.length > 4000) ffmpegErr = ffmpegErr.slice(-2000);
+    });
+    ffmpeg.stdout.resume();
 
     const totalSeconds = phonemes.metadata?.duration || 10.0;
     const totalFrames = Math.max(30, Math.floor(totalSeconds * 30));
@@ -610,9 +619,16 @@ const readJsonClean = (p) => {
         }
     }
 
-    ffmpeg.stdin.end();
-    await new Promise(resolve => ffmpeg.on('close', resolve));
+        ffmpeg.stdin.end();
+    console.log("LOG:[FFmpeg] Finalizing H.264 stream and muxing master audio...");
+    await new Promise((resolve, reject) => {
+        ffmpeg.on('close', code => {
+            if (code !== 0) reject(new Error(`FFmpeg exited with code ${code}: ${ffmpegErr}`));
+            else resolve();
+        });
+    });
     await browser.close();
     server.close();
     console.log("Success! Video saved to: " + outputPath);
 })();
+
