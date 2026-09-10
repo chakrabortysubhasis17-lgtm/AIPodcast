@@ -187,7 +187,12 @@ namespace PodcastEngine.Api.Services
                     string resolved = ResolveSfxFile(seg.Sfx);
                     if (File.Exists(resolved))
                     {
-                        sfxCues.Add(new SfxCue { Time = runningTime, FilePath = resolved });
+                        // Enforce max 3-second ceiling with 0.5s audio fade-out
+                        string clampedSfx = Path.Combine(sessionDir, $"sfx_{seg.Index}.wav");
+                        ClampSfxAudio(resolved, clampedSfx, 3.0);
+                        string finalSfx = File.Exists(clampedSfx) ? clampedSfx : resolved;
+
+                        sfxCues.Add(new SfxCue { Time = runningTime, FilePath = finalSfx });
                         timeline.Add(new TimelineEvent { time = runningTime, type = "sfx", value = seg.Sfx });
                     }
                 }
@@ -276,13 +281,17 @@ namespace PodcastEngine.Api.Services
             var psi = new ProcessStartInfo
             {
                 FileName = "ffmpeg",
-                Arguments = $"-y -i \"{inputPath}\" -t {maxSec.ToString(System.Globalization.CultureInfo.InvariantCulture)} -af \"afade=t=out:st={fadeStart.ToString(System.Globalization.CultureInfo.InvariantCulture)}:d=0.5\" -ar 48000 -ac 1 \"{outputPath}\"",
-                UseShellExecute = false,
+                Arguments = $"-y -i \"{inputPath}\" -t {maxSec.ToString(CultureInfo.InvariantCulture)} -af \"afade=t=out:st={fadeStart.ToString(CultureInfo.InvariantCulture)}:d=0.5\" -ar 24000 -ac 1 \"{outputPath}\"",
                 CreateNoWindow = true,
+                UseShellExecute = false,
                 RedirectStandardError = true
             };
             using var p = Process.Start(psi);
-            p?.WaitForExit();
+            if (p != null)
+            {
+                p.StandardError.ReadToEnd();
+                p.WaitForExit();
+            }
             return outputPath;
         }
 
@@ -339,8 +348,8 @@ namespace PodcastEngine.Api.Services
 
         private async Task SynthesizeSegmentSpeechAsync(string text, string outputPath, CancellationToken ct)
         {
-            text = System.Text.RegularExpressions.Regex.Replace(text, @"(?<=[\d\u09E6-\u09EF])\s*[-\u2013\u2014]\s*(?=[\d\u09E6-\u09EF])", " ");
-            text = System.Text.RegularExpressions.Regex.Replace(text, @"(?<=[০-৯])\s*[-–—]\s*(?=[০-৯])", " ");
+            text = Regex.Replace(text, @"(?<=[\d\u09E6-\u09EF])\s*[-\u2013\u2014]\s*(?=[\d\u09E6-\u09EF])", " ");
+            text = Regex.Replace(text, @"(?<=[০-৯])\s*[-–—]\s*(?=[০-৯])", " ");
             string txtFile = Path.ChangeExtension(outputPath, ".txt");
             await File.WriteAllTextAsync(txtFile, text, new UTF8Encoding(false), ct);
 

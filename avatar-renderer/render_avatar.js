@@ -301,7 +301,9 @@ const readJsonClean = (p) => {
                     parseFn.call(VRM, gltf).then((loadedVrm) => {
                         vrm = loadedVrm;
                         scene.add(vrm.scene);
-                        vrm.scene.rotation.y = Math.PI;
+
+                        // Halved angle: precisely 5.7° (0.10 rad) from perpendicular
+                        vrm.scene.rotation.y = Math.PI - 0.10;
                         vrm.scene.position.set(0, 0, 0);
 
                         vrm.scene.traverse((obj) => {
@@ -323,10 +325,10 @@ const readJsonClean = (p) => {
 
                 if (isLeft) {
                     const configs = [
-                        { name: 'Index',  ySpread: -0.04, pZ: -0.22, iZ: -0.28, dZ: -0.18 },
-                        { name: 'Middle', ySpread:  0.00, pZ: -0.30, iZ: -0.36, dZ: -0.22 },
-                        { name: 'Ring',   ySpread:  0.05, pZ: -0.38, iZ: -0.44, dZ: -0.26 },
-                        { name: 'Little', ySpread:  0.10, pZ: -0.46, iZ: -0.52, dZ: -0.32 }
+                        { name: 'Index',  ySpread: -0.04, pZ: -0.24, iZ: -0.32, dZ: -0.20 },
+                        { name: 'Middle', ySpread:  0.00, pZ: -0.34, iZ: -0.40, dZ: -0.24 },
+                        { name: 'Ring',   ySpread:  0.05, pZ: -0.42, iZ: -0.48, dZ: -0.28 },
+                        { name: 'Little', ySpread:  0.10, pZ: -0.50, iZ: -0.56, dZ: -0.34 }
                     ];
                     configs.forEach(c => {
                         const p = vrm.humanoid.getBoneNode(side + c.name + 'Proximal');
@@ -344,10 +346,10 @@ const readJsonClean = (p) => {
                     if (td) td.rotation.set(0, 0, -0.08);
                 } else {
                     const configs = [
-                        { name: 'Index',  ySpread:  0.04, pZ: isPointing ? 0.04 : 0.24, iZ: isPointing ? 0.02 : 0.28, dZ: isPointing ? 0.00 : 0.18 },
-                        { name: 'Middle', ySpread:  0.00, pZ: isPointing ? 0.75 : 0.32, iZ: isPointing ? 0.85 : 0.36, dZ: isPointing ? 0.55 : 0.22 },
-                        { name: 'Ring',   ySpread: -0.05, pZ: isPointing ? 0.82 : 0.40, iZ: isPointing ? 0.90 : 0.44, dZ: isPointing ? 0.60 : 0.26 },
-                        { name: 'Little', ySpread: -0.10, pZ: isPointing ? 0.88 : 0.48, iZ: isPointing ? 0.95 : 0.52, dZ: isPointing ? 0.65 : 0.32 }
+                        { name: 'Index',  ySpread:  0.04, pZ: isPointing ? 0.04 : 0.26, iZ: isPointing ? 0.02 : 0.32, dZ: isPointing ? 0.00 : 0.20 },
+                        { name: 'Middle', ySpread:  0.00, pZ: isPointing ? 0.75 : 0.36, iZ: isPointing ? 0.85 : 0.40, dZ: isPointing ? 0.55 : 0.24 },
+                        { name: 'Ring',   ySpread: -0.05, pZ: isPointing ? 0.82 : 0.44, iZ: isPointing ? 0.90 : 0.48, dZ: isPointing ? 0.60 : 0.28 },
+                        { name: 'Little', ySpread: -0.10, pZ: isPointing ? 0.88 : 0.52, iZ: isPointing ? 0.95 : 0.56, dZ: isPointing ? 0.65 : 0.34 }
                     ];
                     configs.forEach(c => {
                         const p = vrm.humanoid.getBoneNode(side + c.name + 'Proximal');
@@ -360,9 +362,9 @@ const readJsonClean = (p) => {
                     const tp = vrm.humanoid.getBoneNode(side + 'ThumbProximal');
                     const ti = vrm.humanoid.getBoneNode(side + 'ThumbIntermediate');
                     const td = vrm.humanoid.getBoneNode(side + 'ThumbDistal');
-                    if (tp) tp.rotation.set(-0.10, 0.18, isPointing ? 0.35 : 0.15);
-                    if (ti) ti.rotation.set(0, 0, isPointing ? 0.25 : 0.12);
-                    if (td) td.rotation.set(0, 0, isPointing ? 0.18 : 0.08);
+                    if (tp) tp.rotation.set(-0.10, 0.18, isPointing ? 0.35 : 0.18);
+                    if (ti) ti.rotation.set(0, 0, isPointing ? 0.25 : 0.14);
+                    if (td) td.rotation.set(0, 0, isPointing ? 0.18 : 0.10);
                 }
             }
 
@@ -448,7 +450,8 @@ const readJsonClean = (p) => {
                 }
                 if (chest) {
                     chest.rotation.x = breathCycle * 0.026;
-                    chest.rotation.y = organicSway(tSpine, 0.35, 0.75, 1.5) * 0.015;
+                    // Halved chest inward rotation
+                    chest.rotation.y = -0.04 + organicSway(tSpine, 0.35, 0.75, 1.5) * 0.015;
                 }
 
                 if (rShoulder) rShoulder.rotation.set(0.04, 0.06, 0.08 + breathCycle * 0.01);
@@ -457,20 +460,21 @@ const readJsonClean = (p) => {
                 const isSpeaking = phoneme && phoneme !== 'X';
                 const nod = isSpeaking ? (Math.sin(t * 3.8) * 0.024 + Math.sin(t * 7.2) * 0.01) : (Math.sin(t * 1.1) * 0.008);
 
-                const headRoll = -0.07 + organicSway(tHead, 0.52, 1.05, 2.2) * 0.018;
-                const headYaw = 0.04 + organicSway(tHead, 0.42, 0.88, 1.75) * 0.022;
+                // Halved head yaw (-0.07 rad) maintains direct eye line with audience
+                const headRoll = -0.05 + organicSway(tHead, 0.52, 1.05, 2.2) * 0.018;
+                const headYaw = -0.07 + organicSway(tHead, 0.42, 0.88, 1.75) * 0.022;
                 const headPitch = -0.06 + nod + organicSway(tHead, 0.65, 1.3, 2.6) * 0.012;
 
                 if (head) head.rotation.set(headPitch, headYaw, headRoll);
                 if (neck) neck.rotation.set(nod * 0.35 + headPitch * 0.25, headYaw * 0.25, headRoll * 0.25);
 
                 if (t > nextSaccadeTime) {
-                    nextSaccadeTime = t + 1.4 + Math.random() * 1.8;
-                    saccadeTargetX = (Math.random() - 0.5) * 0.038;
-                    saccadeTargetY = (Math.random() - 0.5) * 0.024;
+                    nextSaccadeTime = t + 1.8 + Math.random() * 2.0;
+                    saccadeTargetX = (Math.random() - 0.5) * 0.028;
+                    saccadeTargetY = (Math.random() - 0.5) * 0.018;
                 }
-                saccadeCurrX = lerp(saccadeCurrX, saccadeTargetX, 0.12);
-                saccadeCurrY = lerp(saccadeCurrY, saccadeTargetY, 0.12);
+                saccadeCurrX = lerp(saccadeCurrX, saccadeTargetX, 0.10);
+                saccadeCurrY = lerp(saccadeCurrY, saccadeTargetY, 0.10);
 
                 const lEye = vrm.humanoid.getBoneNode('leftEye');
                 const rEye = vrm.humanoid.getBoneNode('rightEye');

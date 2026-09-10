@@ -184,7 +184,7 @@ import { AssetInspectorManager } from './components/asset-inspector';
 
         <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 10px; font-size: 12px; color: #94a3b8;">
           <span>Pipeline: Google TTS ➔ Rhubarb Visemes ➔ D3D11 Canvas Pipe ➔ FFmpeg</span>
-          <span>Elapsed: {{ elapsedSeconds }}s</span>
+          <span>Elapsed: {{ formatDuration(elapsedSeconds) }}</span>
         </div>
       </div>
 
@@ -270,6 +270,25 @@ Hey guys, welcome back to the podcast!
     this.updateHighlight();
   }
 
+  formatDuration(totalSec: number): string {
+    if (!totalSec || totalSec <= 0) return '0s';
+    const sec = Math.floor(totalSec);
+    if (sec < 60) {
+      return `${sec}s`;
+    }
+
+    const hours = Math.floor(sec / 3600);
+    const minutes = Math.floor((sec % 3600) / 60);
+    const seconds = sec % 60;
+    const pad = (n: number) => n.toString().padStart(2, '0');
+
+    if (hours > 0) {
+      return `${pad(hours)}h ${pad(minutes)}m ${pad(seconds)}s`;
+    } else {
+      return `${minutes}m ${pad(seconds)}s`;
+    }
+  }
+
   getStageTitle(stageNum: number): string {
     switch (stageNum) {
       case 1: return 'Voice Synthesis';
@@ -328,7 +347,7 @@ Hey guys, welcome back to the podcast!
     const elapsedMs = Date.now() - this.stageStartTime;
     const estimatedTotalMs = (elapsedMs / progress) * 100;
     const remainingSec = Math.max(0, Math.round((estimatedTotalMs - elapsedMs) / 1000));
-    this.stepEtaText = `~${remainingSec}s remaining`;
+    this.stepEtaText = `~${this.formatDuration(remainingSec)} remaining`;
   }
 
   generateVideo() {
