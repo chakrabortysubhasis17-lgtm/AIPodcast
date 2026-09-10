@@ -109,7 +109,7 @@ const readJsonClean = (p) => {
         <script src="https://unpkg.com/three@0.146.0/build/three.min.js"></script>
         <script src="https://unpkg.com/three@0.146.0/examples/js/loaders/GLTFLoader.js"></script>
         <script src="https://unpkg.com/@pixiv/three-vrm@0.6.11/lib/three-vrm.min.js"></script>
-        <style>body { margin: 0; overflow: hidden; background: #f5f7fa; }</style>
+        <style>body { margin: 0; overflow: hidden; background: #f8fafc; }</style>
     </head>
     <body>
         <canvas id="canvas" width="1920" height="1080"></canvas>
@@ -124,28 +124,52 @@ const readJsonClean = (p) => {
             let activeViseme = null;
             let activeEmotionKey = null;
 
-            // VRoid Hub Studio Light Backdrop
+            let nextSaccadeTime = 0;
+            let saccadeTargetX = 0;
+            let saccadeTargetY = 0;
+            let saccadeCurrX = 0;
+            let saccadeCurrY = 0;
+
             function createStudioBackdrop() {
                 const bgCanvas = document.createElement('canvas');
                 bgCanvas.width = 1920;
                 bgCanvas.height = 1080;
                 const ctx = bgCanvas.getContext('2d');
 
-                const grad = ctx.createRadialGradient(960, 480, 150, 960, 540, 1100);
+                const grad = ctx.createRadialGradient(960, 480, 160, 960, 540, 1100);
                 grad.addColorStop(0, '#ffffff');
-                grad.addColorStop(0.55, '#f5f7fa');
-                grad.addColorStop(1, '#e8ebf0');
+                grad.addColorStop(0.60, '#f8fafc');
+                grad.addColorStop(1, '#e9edf3');
                 ctx.fillStyle = grad;
                 ctx.fillRect(0, 0, 1920, 1080);
 
                 const texture = new THREE.CanvasTexture(bgCanvas);
-                const geo = new THREE.PlaneGeometry(12, 6.75);
+                const geo = new THREE.PlaneGeometry(14, 8);
                 const mat = new THREE.MeshBasicMaterial({ map: texture });
                 const mesh = new THREE.Mesh(geo, mat);
                 mesh.position.set(0, 1.25, -2.5);
                 mesh.matrixAutoUpdate = false;
                 mesh.updateMatrix();
                 scene.add(mesh);
+
+                const shadowCanvas = document.createElement('canvas');
+                shadowCanvas.width = 512;
+                shadowCanvas.height = 512;
+                const sCtx = shadowCanvas.getContext('2d');
+                const sGrad = sCtx.createRadialGradient(256, 256, 10, 256, 256, 240);
+                sGrad.addColorStop(0, 'rgba(30, 41, 59, 0.35)');
+                sGrad.addColorStop(0.4, 'rgba(51, 65, 85, 0.15)');
+                sGrad.addColorStop(1, 'rgba(255, 255, 255, 0.0)');
+                sCtx.fillStyle = sGrad;
+                sCtx.fillRect(0, 0, 512, 512);
+
+                const sTex = new THREE.CanvasTexture(shadowCanvas);
+                const sGeo = new THREE.PlaneGeometry(1.6, 1.6);
+                const sMat = new THREE.MeshBasicMaterial({ map: sTex, transparent: true, opacity: 0.85 });
+                const floorShadow = new THREE.Mesh(sGeo, sMat);
+                floorShadow.rotation.x = -Math.PI / 2;
+                floorShadow.position.set(0, 0.005, 0);
+                scene.add(floorShadow);
             }
 
             function setupOrthographicHUD() {
@@ -231,9 +255,8 @@ const readJsonClean = (p) => {
                 });
                 renderer.setSize(1920, 1080);
                 renderer.setPixelRatio(1);
-                renderer.setClearColor(0xf5f7fa, 1);
+                renderer.setClearColor(0xf8fafc, 1);
 
-                // Disable tone mapping and extra gamma encoding to preserve original MToon colors
                 renderer.outputEncoding = THREE.LinearEncoding;
                 renderer.toneMapping = THREE.NoToneMapping;
                 renderer.autoClear = false;
@@ -250,22 +273,18 @@ const readJsonClean = (p) => {
                 createStudioBackdrop();
                 setupOrthographicHUD();
 
-                // 1. Soft Warm Ambient Fill: Preserves true blacks and dark brown hair
                 const ambientLight = new THREE.AmbientLight(0xfff5ee, 0.28);
                 scene.add(ambientLight);
 
-                // 2. Front Key Light: Clean cel-shading under chin, bangs, and collar
                 const keyLight = new THREE.DirectionalLight(0xffffff, 0.82);
                 keyLight.position.set(0.5, 1.6, 1.5).normalize();
                 scene.add(keyLight);
 
-                // 3. VRoid Hub Signature Golden Rim: Yellow edge glow along right shoulder and hair
-                const goldRim = new THREE.DirectionalLight(0xffb703, 1.15);
+                const goldRim = new THREE.DirectionalLight(0xffb703, 1.2);
                 goldRim.position.set(-1.6, 1.4, -1.0).normalize();
                 scene.add(goldRim);
 
-                // 4. Subtle Left Shoulder Definition
-                const fillRim = new THREE.DirectionalLight(0xffffff, 0.30);
+                const fillRim = new THREE.DirectionalLight(0xffffff, 0.28);
                 fillRim.position.set(1.5, 1.2, -0.8).normalize();
                 scene.add(fillRim);
 
@@ -283,13 +302,10 @@ const readJsonClean = (p) => {
                         vrm.scene.rotation.y = Math.PI;
                         vrm.scene.position.set(0, 0, 0);
 
-                        // Ensure materials output direct texture colors
                         vrm.scene.traverse((obj) => {
                             if (obj.isMesh && obj.material) {
                                 const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
-                                mats.forEach(m => {
-                                    m.toneMapped = false;
-                                });
+                                mats.forEach(m => { m.toneMapped = false; });
                             }
                         });
 
@@ -298,6 +314,57 @@ const readJsonClean = (p) => {
                         window.__ready = true;
                     }).catch(err => console.error("VRM initialization error:", err));
                 }, undefined, (err) => console.error("GLTF download error:", err));
+            }
+
+            // Anatomically calibrated finger poser (closes T-pose fan gap, curves fingers into palm)
+            function poseFingersCorrect(isLeft, isPointing) {
+                const side = isLeft ? 'left' : 'right';
+
+                if (isLeft) {
+                    // Left Hand (Hanging relaxed at side, palm facing thigh)
+                    const configs = [
+                        { name: 'Index',  ySpread: -0.04, pZ: -0.22, iZ: -0.28, dZ: -0.18 },
+                        { name: 'Middle', ySpread:  0.00, pZ: -0.30, iZ: -0.36, dZ: -0.22 },
+                        { name: 'Ring',   ySpread:  0.05, pZ: -0.38, iZ: -0.44, dZ: -0.26 },
+                        { name: 'Little', ySpread:  0.10, pZ: -0.46, iZ: -0.52, dZ: -0.32 }
+                    ];
+                    configs.forEach(c => {
+                        const p = vrm.humanoid.getBoneNode(side + c.name + 'Proximal');
+                        const i = vrm.humanoid.getBoneNode(side + c.name + 'Intermediate');
+                        const d = vrm.humanoid.getBoneNode(side + c.name + 'Distal');
+                        if (p) p.rotation.set(0, c.ySpread, c.pZ);
+                        if (i) i.rotation.set(0, 0, c.iZ);
+                        if (d) d.rotation.set(0, 0, c.dZ);
+                    });
+                    const tp = vrm.humanoid.getBoneNode(side + 'ThumbProximal');
+                    const ti = vrm.humanoid.getBoneNode(side + 'ThumbIntermediate');
+                    const td = vrm.humanoid.getBoneNode(side + 'ThumbDistal');
+                    if (tp) tp.rotation.set(-0.10, -0.18, -0.15);
+                    if (ti) ti.rotation.set(0, 0, -0.12);
+                    if (td) td.rotation.set(0, 0, -0.08);
+                } else {
+                    // Right Hand: Resting hand-on-hip vs Pointing at graphics
+                    const configs = [
+                        { name: 'Index',  ySpread:  0.04, pZ: isPointing ? 0.04 : 0.24, iZ: isPointing ? 0.02 : 0.28, dZ: isPointing ? 0.00 : 0.18 },
+                        { name: 'Middle', ySpread:  0.00, pZ: isPointing ? 0.75 : 0.32, iZ: isPointing ? 0.85 : 0.36, dZ: isPointing ? 0.55 : 0.22 },
+                        { name: 'Ring',   ySpread: -0.05, pZ: isPointing ? 0.82 : 0.40, iZ: isPointing ? 0.90 : 0.44, dZ: isPointing ? 0.60 : 0.26 },
+                        { name: 'Little', ySpread: -0.10, pZ: isPointing ? 0.88 : 0.48, iZ: isPointing ? 0.95 : 0.52, dZ: isPointing ? 0.65 : 0.32 }
+                    ];
+                    configs.forEach(c => {
+                        const p = vrm.humanoid.getBoneNode(side + c.name + 'Proximal');
+                        const i = vrm.humanoid.getBoneNode(side + c.name + 'Intermediate');
+                        const d = vrm.humanoid.getBoneNode(side + c.name + 'Distal');
+                        if (p) p.rotation.set(0, c.ySpread, c.pZ);
+                        if (i) i.rotation.set(0, 0, c.iZ);
+                        if (d) d.rotation.set(0, 0, c.dZ);
+                    });
+                    const tp = vrm.humanoid.getBoneNode(side + 'ThumbProximal');
+                    const ti = vrm.humanoid.getBoneNode(side + 'ThumbIntermediate');
+                    const td = vrm.humanoid.getBoneNode(side + 'ThumbDistal');
+                    if (tp) tp.rotation.set(-0.10, 0.18, isPointing ? 0.35 : 0.15);
+                    if (ti) ti.rotation.set(0, 0, isPointing ? 0.25 : 0.12);
+                    if (td) td.rotation.set(0, 0, isPointing ? 0.18 : 0.08);
+                }
             }
 
             const visemeMap = { 'B': 'i', 'C': 'e', 'D': 'a', 'E': 'u', 'F': 'o', 'G': 'i', 'H': 'a' };
@@ -313,6 +380,8 @@ const readJsonClean = (p) => {
                 const chest = vrm.humanoid.getBoneNode('chest');
                 const neck = vrm.humanoid.getBoneNode('neck');
                 const head = vrm.humanoid.getBoneNode('head');
+                const rShoulder = vrm.humanoid.getBoneNode('rightShoulder');
+                const lShoulder = vrm.humanoid.getBoneNode('leftShoulder');
                 const rArm = vrm.humanoid.getBoneNode('rightUpperArm');
                 const rElbow = vrm.humanoid.getBoneNode('rightLowerArm');
                 const rHand = vrm.humanoid.getBoneNode('rightHand');
@@ -329,11 +398,9 @@ const readJsonClean = (p) => {
                     const isCloseUp = mode.includes('close') || mode.includes('zoom');
                     const isSlowZoom = mode.includes('slow zoom');
 
-                    // Default Mid Shot: Framed mid-thigh up on right with clean headroom
                     const midPos = new THREE.Vector3(-0.38, 1.18, 2.25);
                     const midLook = new THREE.Vector3(-0.38, 1.15, 0);
 
-                    // Tight Face Close-Up
                     const closePos = new THREE.Vector3(-0.10, 1.36, 1.15);
                     const closeLook = new THREE.Vector3(-0.10, 1.36, 0);
 
@@ -360,37 +427,72 @@ const readJsonClean = (p) => {
                     cam.lookAt(window.__camLook);
                 }
 
-                // --- 3. Body Stance & Weight Shift ---
-                const breath = Math.sin(t * 2.1) * 0.018;
+                // --- 3. Multi-Harmonic Idle Loop ---
+                const organicSway = (time, f1, f2, f3) => {
+                    return Math.sin(time * f1) * 0.55 + Math.sin(time * f2) * 0.32 + Math.sin(time * f3) * 0.13;
+                };
+
+                const tHips = t;
+                const tSpine = t - 0.15;
+                const tHead = t - 0.35;
+
+                const hipSwayX = organicSway(tHips, 0.72, 1.35, 2.81) * 0.016;
+                const hipRollZ = organicSway(tHips, 0.68, 1.25, 2.50) * 0.024;
+                const breathCycle = Math.sin(t * 1.96);
 
                 if (hips) {
-                    hips.rotation.z = -0.04;
-                    hips.position.x = 0.012;
+                    hips.position.x = 0.012 + hipSwayX;
+                    hips.rotation.z = -0.042 + hipRollZ;
+                    hips.rotation.y = organicSway(tHips, 0.45, 0.95, 1.7) * 0.018;
                 }
                 if (spine) {
-                    spine.rotation.x = breath * 0.4;
-                    spine.rotation.z = 0.025;
+                    spine.rotation.x = breathCycle * 0.018 + organicSway(tSpine, 0.5, 1.1, 2.1) * 0.008;
+                    spine.rotation.z = 0.028 - hipRollZ * 0.65;
+                    spine.rotation.y = organicSway(tSpine, 0.4, 0.8, 1.6) * 0.012;
                 }
                 if (chest) {
-                    chest.rotation.x = breath * 0.6;
+                    chest.rotation.x = breathCycle * 0.026;
+                    chest.rotation.y = organicSway(tSpine, 0.35, 0.75, 1.5) * 0.015;
                 }
 
-                // Head: Confident slight chin lift & subtle tilt
+                if (rShoulder) {
+                    rShoulder.rotation.set(0.04, 0.06, 0.08 + breathCycle * 0.01);
+                }
+                if (lShoulder) {
+                    lShoulder.rotation.set(-0.02, 0.0, -0.03 - breathCycle * 0.008);
+                }
+
                 const isSpeaking = phoneme && phoneme !== 'X';
-                const nod = isSpeaking ? Math.sin(t * 3.6) * 0.022 : Math.sin(t * 1.1) * 0.008;
+                const nod = isSpeaking ? (Math.sin(t * 3.8) * 0.024 + Math.sin(t * 7.2) * 0.01) : (Math.sin(t * 1.1) * 0.008);
+
+                const headRoll = -0.07 + organicSway(tHead, 0.52, 1.05, 2.2) * 0.018;
+                const headYaw = 0.04 + organicSway(tHead, 0.42, 0.88, 1.75) * 0.022;
+                const headPitch = -0.06 + nod + organicSway(tHead, 0.65, 1.3, 2.6) * 0.012;
 
                 if (head) {
-                    head.rotation.set(
-                        -0.06 + nod,
-                        0.04 + Math.sin(t * 0.6) * 0.015,
-                        -0.06 + Math.sin(t * 0.8) * 0.01
-                    );
+                    head.rotation.set(headPitch, headYaw, headRoll);
                 }
                 if (neck) {
-                    neck.rotation.set(nod * 0.35, 0.02, -0.02);
+                    neck.rotation.set(nod * 0.35 + headPitch * 0.25, headYaw * 0.25, headRoll * 0.25);
                 }
 
-                // --- 4. Anatomically Correct Arms & Hands ---
+                // Eye Saccades
+                if (t > nextSaccadeTime) {
+                    nextSaccadeTime = t + 1.4 + Math.random() * 1.8;
+                    saccadeTargetX = (Math.random() - 0.5) * 0.038;
+                    saccadeTargetY = (Math.random() - 0.5) * 0.024;
+                }
+                saccadeCurrX = lerp(saccadeCurrX, saccadeTargetX, 0.12);
+                saccadeCurrY = lerp(saccadeCurrY, saccadeTargetY, 0.12);
+
+                const lEye = vrm.humanoid.getBoneNode('leftEye');
+                const rEye = vrm.humanoid.getBoneNode('rightEye');
+                if (lEye && rEye) {
+                    lEye.rotation.set(saccadeCurrY, saccadeCurrX, 0);
+                    rEye.rotation.set(saccadeCurrY, saccadeCurrX, 0);
+                }
+
+                // --- 4. Anatomically Correct Arm & Hand Kinematics ---
                 const hasOverlay = Boolean(activeOverlay);
                 const gest = (activeGesture || '').toLowerCase();
                 const isGestActive = gest && gestAge <= 2.5;
@@ -400,19 +502,21 @@ const readJsonClean = (p) => {
                 window.__pointingWeight = lerp(window.__pointingWeight, shouldPoint ? 1.0 : 0.0, 0.08);
                 const pw = window.__pointingWeight;
 
-                // Right Arm (Tattoo): Hand-on-hip pose vs. Pointing towards overlay
+                // Right Arm (Tattoo Sleeve): Hand-on-Hip vs Pointing
                 if (rArm && rElbow) {
-                    const hipArmX = -0.18 + breath * 0.2;
-                    const hipArmY = 0.12;
+                    // Hand on hip: upper arm pulled slightly back, elbow flexed on X to reach waist
+                    const hipArmX = -0.28 + breathCycle * 0.008;
+                    const hipArmY = -0.15;
                     const hipArmZ = -1.18;
-                    const hipElbX = -1.25;
-                    const hipElbY = 0.0;
-                    const hipElbZ = -0.08;
+                    const hipElbX = -0.92;
+                    const hipElbY = 0.0;   // ZERO TWIST
+                    const hipElbZ = -0.05;
 
+                    // Pointing gesture towards left overlay
                     const pointArmX = 0.45;
-                    const pointArmY = 0.40;
+                    const pointArmY = 0.42;
                     const pointArmZ = -0.65;
-                    const pointElbX = -0.30;
+                    const pointElbX = -0.32;
                     const pointElbY = 0.0;
                     const pointElbZ = 0.0;
 
@@ -427,61 +531,46 @@ const readJsonClean = (p) => {
                         lerp(hipElbZ, pointElbZ, pw)
                     );
                     if (rHand) {
+                        // Wrist cupped against pelvic curve; flattens out during pointing
                         rHand.rotation.set(
-                            lerp(0.12, 0.0, pw),
-                            lerp(0.0, 0.0, pw),
-                            lerp(0.18, -0.15, pw)
+                            lerp(0.10, 0.0, pw),
+                            lerp(-0.15, 0.0, pw),
+                            lerp(-0.20, -0.12, pw)
                         );
                     }
                 }
 
-                // Left Arm (Wristband): Relaxed along side, palm facing thigh, thumb forward
+                // Left Arm: Hanging relaxed along side, palm facing thigh, thumb forward
                 if (lArm) {
-                    lArm.rotation.set(0.08 + breath * 0.2, 0.0, 1.25);
+                    lArm.rotation.set(0.04 + breathCycle * 0.006, 0.0, 1.30);
                 }
                 if (lElbow) {
-                    lElbow.rotation.set(0.18, 0.0, 0.0);
+                    lElbow.rotation.set(0.08, 0.0, 0.0); // Natural slight elbow ease, ZERO TWIST
                 }
                 if (lHand) {
-                    lHand.rotation.set(-0.05, 0.0, 0.0);
+                    lHand.rotation.set(0.0, 0.0, 0.0);  // Clean neutral wrist alignment
                 }
 
-                // --- 5. Natural Finger Curls ---
-                const fingerBones = ['Index', 'Middle', 'Ring', 'Little'];
+                // --- 5. Apply Natural Cascading Fingers ---
+                poseFingersCorrect(true, false);          // Left hand: natural resting curl against thigh
+                poseFingersCorrect(false, pw > 0.05);     // Right hand: resting on hip vs pointing
 
-                fingerBones.forEach(f => {
-                    const p = vrm.humanoid.getBoneNode('left' + f + 'Proximal');
-                    const i = vrm.humanoid.getBoneNode('left' + f + 'Intermediate');
-                    const d = vrm.humanoid.getBoneNode('left' + f + 'Distal');
-                    if (p) p.rotation.z = -0.22;
-                    if (i) i.rotation.z = -0.28;
-                    if (d) d.rotation.z = -0.18;
-                });
-                const ltp = vrm.humanoid.getBoneNode('leftThumbProximal');
-                if (ltp) ltp.rotation.set(0.10, -0.10, -0.10);
-
-                const rCurl = lerp(0.24, 0.06, pw);
-                fingerBones.forEach(f => {
-                    const p = vrm.humanoid.getBoneNode('right' + f + 'Proximal');
-                    const i = vrm.humanoid.getBoneNode('right' + f + 'Intermediate');
-                    const d = vrm.humanoid.getBoneNode('right' + f + 'Distal');
-                    if (p) p.rotation.z = rCurl;
-                    if (i) i.rotation.z = rCurl * 1.1;
-                    if (d) d.rotation.z = rCurl * 0.8;
-                });
-                const rtp = vrm.humanoid.getBoneNode('rightThumbProximal');
-                if (rtp) rtp.rotation.set(-0.12, 0.10, rCurl * 0.4);
-
-                // Head Gestures
+                // Scripted head gestures
                 if (isGestActive && gest.includes('nod') && head) {
                     head.rotation.x += Math.sin(gestAge * 9.0) * 0.10;
                 } else if (isGestActive && (gest.includes('head shake') || gest.includes('shake')) && head) {
                     head.rotation.y += Math.sin(gestAge * 8.0) * 0.14;
                 }
 
-                // --- 6. Natural Blinking & Facial Presence ---
-                const blinkCycle = t % 3.6;
-                const blinkVal = blinkCycle < 0.16 ? Math.sin((blinkCycle / 0.16) * Math.PI) : 0;
+                // --- 6. Natural Asymmetrical Blinking ---
+                const blinkPeriod = 3.8;
+                const blinkMod = t % blinkPeriod;
+                let blinkVal = 0;
+                if (blinkMod < 0.08) {
+                    blinkVal = blinkMod / 0.08;
+                } else if (blinkMod < 0.24) {
+                    blinkVal = 1.0 - ((blinkMod - 0.08) / 0.16);
+                }
                 if (vrm.blendShapeProxy) {
                     vrm.blendShapeProxy.setValue('blink', blinkVal);
                 }
@@ -517,6 +606,7 @@ const readJsonClean = (p) => {
                     vrm.blendShapeProxy.setValue('fun', 0.16);
                 }
 
+                // Update spring bones for hair physics
                 vrm.update(1 / 30);
 
                 // --- 8. HUD Graphic Overlay (Left Side Space) ---
