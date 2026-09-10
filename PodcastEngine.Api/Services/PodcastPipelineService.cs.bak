@@ -270,22 +270,6 @@ namespace PodcastEngine.Api.Services
             p.WaitForExit();
         }
 
-        private string ClampSfxAudio(string inputPath, string outputPath, double maxSec = 3.0)
-        {
-            double fadeStart = Math.Max(0.1, maxSec - 0.5);
-            var psi = new ProcessStartInfo
-            {
-                FileName = "ffmpeg",
-                Arguments = $"-y -i \"{inputPath}\" -t {maxSec.ToString(System.Globalization.CultureInfo.InvariantCulture)} -af \"afade=t=out:st={fadeStart.ToString(System.Globalization.CultureInfo.InvariantCulture)}:d=0.5\" -ar 48000 -ac 1 \"{outputPath}\"",
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                RedirectStandardError = true
-            };
-            using var p = Process.Start(psi);
-            p?.WaitForExit();
-            return outputPath;
-        }
-
         private double GetWavDurationSeconds(string wavPath)
         {
             var fi = new FileInfo(wavPath);
@@ -339,8 +323,8 @@ namespace PodcastEngine.Api.Services
 
         private async Task SynthesizeSegmentSpeechAsync(string text, string outputPath, CancellationToken ct)
         {
-            // Scoreline normalization: e.g. "1-0" -> "1 0", "২-১" -> "২ ১"
-            text = System.Text.RegularExpressions.Regex.Replace(text, @"(?<=[\d\u09E6-\u09EF])\s*[-\u2013\u2014]\s*(?=[\d\u09E6-\u09EF])", " ");
+            // Scoreline normalization: prevents TTS pronouncing hyphens as 'minus' or 'মাইনাস'
+            text = System.Text.RegularExpressions.Regex.Replace(text, @"(?<=\d)\s*[-–—]\s*(?=\d)", " ");
             text = System.Text.RegularExpressions.Regex.Replace(text, @"(?<=[০-৯])\s*[-–—]\s*(?=[০-৯])", " ");
             string txtFile = Path.ChangeExtension(outputPath, ".txt");
             await File.WriteAllTextAsync(txtFile, text, new UTF8Encoding(false), ct);
@@ -634,6 +618,4 @@ namespace PodcastEngine.Api.Services
         }
     }
 }
-
-
 
