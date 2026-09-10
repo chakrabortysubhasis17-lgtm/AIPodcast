@@ -8,7 +8,7 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const [,, sessionDir, timelinePath, phonemesPath, audioPath, outputPath] = process.argv;
+const [,, sessionDir, timelinePath, phonemesPath, audioPath, outputPath, avatarChoiceArg] = process.argv;
 
 const readJsonClean = (p) => {
     let raw = fs.readFileSync(p, 'utf8');
@@ -33,17 +33,19 @@ const readJsonClean = (p) => {
         }
     }
 
+    const chosenAvatar = (avatarChoiceArg || 'mina').toLowerCase().trim();
     const modelCandidates = [
+        path.join(__dirname, 'public', `${chosenAvatar}.vrm`),
+        path.join(__dirname, `${chosenAvatar}.vrm`),
         path.join(__dirname, 'public', 'avatar.vrm'),
-        path.join(__dirname, 'public', 'avatar1.vrm'),
-        path.join(__dirname, 'avatar.vrm'),
-        path.join(__dirname, 'public', 'assets', 'models', 'avatar.vrm')
+        path.join(__dirname, 'avatar.vrm')
     ];
     const modelPath = modelCandidates.find(p => fs.existsSync(p));
     if (!modelPath) {
-        console.error("Could not find avatar.vrm");
+        console.error(`Could not find VRM model for '${chosenAvatar}' in candidate paths.`);
         process.exit(1);
     }
+    console.log(`LOG:[Renderer] Using Avatar: ${chosenAvatar} -> ${modelPath}`);
 
     const server = http.createServer((req, res) => {
         if (req.url === '/avatar.vrm') {
@@ -316,12 +318,10 @@ const readJsonClean = (p) => {
                 }, undefined, (err) => console.error("GLTF download error:", err));
             }
 
-            // Anatomically calibrated finger poser (closes T-pose fan gap, curves fingers into palm)
             function poseFingersCorrect(isLeft, isPointing) {
                 const side = isLeft ? 'left' : 'right';
 
                 if (isLeft) {
-                    // Left Hand (Hanging relaxed at side, palm facing thigh)
                     const configs = [
                         { name: 'Index',  ySpread: -0.04, pZ: -0.22, iZ: -0.28, dZ: -0.18 },
                         { name: 'Middle', ySpread:  0.00, pZ: -0.30, iZ: -0.36, dZ: -0.22 },
@@ -343,7 +343,6 @@ const readJsonClean = (p) => {
                     if (ti) ti.rotation.set(0, 0, -0.12);
                     if (td) td.rotation.set(0, 0, -0.08);
                 } else {
-                    // Right Hand: Resting hand-on-hip vs Pointing at graphics
                     const configs = [
                         { name: 'Index',  ySpread:  0.04, pZ: isPointing ? 0.04 : 0.24, iZ: isPointing ? 0.02 : 0.28, dZ: isPointing ? 0.00 : 0.18 },
                         { name: 'Middle', ySpread:  0.00, pZ: isPointing ? 0.75 : 0.32, iZ: isPointing ? 0.85 : 0.36, dZ: isPointing ? 0.55 : 0.22 },
@@ -374,7 +373,6 @@ const readJsonClean = (p) => {
 
                 const lerp = (a, b, alpha) => a + (b - a) * alpha;
 
-                // --- 1. Bone Targets ---
                 const hips = vrm.humanoid.getBoneNode('hips');
                 const spine = vrm.humanoid.getBoneNode('spine');
                 const chest = vrm.humanoid.getBoneNode('chest');
@@ -389,7 +387,6 @@ const readJsonClean = (p) => {
                 const lElbow = vrm.humanoid.getBoneNode('leftLowerArm');
                 const lHand = vrm.humanoid.getBoneNode('leftHand');
 
-                // --- 2. Camera Framing & Transitions ---
                 const cam = window.__camera || (typeof camera !== 'undefined' ? camera : null);
                 if (cam) {
                     if (!window.__camLook) window.__camLook = new THREE.Vector3(-0.38, 1.15, 0);
@@ -427,7 +424,6 @@ const readJsonClean = (p) => {
                     cam.lookAt(window.__camLook);
                 }
 
-                // --- 3. Multi-Harmonic Idle Loop ---
                 const organicSway = (time, f1, f2, f3) => {
                     return Math.sin(time * f1) * 0.55 + Math.sin(time * f2) * 0.32 + Math.sin(time * f3) * 0.13;
                 };
@@ -455,12 +451,8 @@ const readJsonClean = (p) => {
                     chest.rotation.y = organicSway(tSpine, 0.35, 0.75, 1.5) * 0.015;
                 }
 
-                if (rShoulder) {
-                    rShoulder.rotation.set(0.04, 0.06, 0.08 + breathCycle * 0.01);
-                }
-                if (lShoulder) {
-                    lShoulder.rotation.set(-0.02, 0.0, -0.03 - breathCycle * 0.008);
-                }
+                if (rShoulder) rShoulder.rotation.set(0.04, 0.06, 0.08 + breathCycle * 0.01);
+                if (lShoulder) lShoulder.rotation.set(-0.02, 0.0, -0.03 - breathCycle * 0.008);
 
                 const isSpeaking = phoneme && phoneme !== 'X';
                 const nod = isSpeaking ? (Math.sin(t * 3.8) * 0.024 + Math.sin(t * 7.2) * 0.01) : (Math.sin(t * 1.1) * 0.008);
@@ -469,14 +461,9 @@ const readJsonClean = (p) => {
                 const headYaw = 0.04 + organicSway(tHead, 0.42, 0.88, 1.75) * 0.022;
                 const headPitch = -0.06 + nod + organicSway(tHead, 0.65, 1.3, 2.6) * 0.012;
 
-                if (head) {
-                    head.rotation.set(headPitch, headYaw, headRoll);
-                }
-                if (neck) {
-                    neck.rotation.set(nod * 0.35 + headPitch * 0.25, headYaw * 0.25, headRoll * 0.25);
-                }
+                if (head) head.rotation.set(headPitch, headYaw, headRoll);
+                if (neck) neck.rotation.set(nod * 0.35 + headPitch * 0.25, headYaw * 0.25, headRoll * 0.25);
 
-                // Eye Saccades
                 if (t > nextSaccadeTime) {
                     nextSaccadeTime = t + 1.4 + Math.random() * 1.8;
                     saccadeTargetX = (Math.random() - 0.5) * 0.038;
@@ -492,7 +479,6 @@ const readJsonClean = (p) => {
                     rEye.rotation.set(saccadeCurrY, saccadeCurrX, 0);
                 }
 
-                // --- 4. Anatomically Correct Arm & Hand Kinematics ---
                 const hasOverlay = Boolean(activeOverlay);
                 const gest = (activeGesture || '').toLowerCase();
                 const isGestActive = gest && gestAge <= 2.5;
@@ -502,17 +488,14 @@ const readJsonClean = (p) => {
                 window.__pointingWeight = lerp(window.__pointingWeight, shouldPoint ? 1.0 : 0.0, 0.08);
                 const pw = window.__pointingWeight;
 
-                // Right Arm (Tattoo Sleeve): Hand-on-Hip vs Pointing
                 if (rArm && rElbow) {
-                    // Hand on hip: upper arm pulled slightly back, elbow flexed on X to reach waist
                     const hipArmX = -0.28 + breathCycle * 0.008;
                     const hipArmY = -0.15;
                     const hipArmZ = -1.18;
                     const hipElbX = -0.92;
-                    const hipElbY = 0.0;   // ZERO TWIST
+                    const hipElbY = 0.0;
                     const hipElbZ = -0.05;
 
-                    // Pointing gesture towards left overlay
                     const pointArmX = 0.45;
                     const pointArmY = 0.42;
                     const pointArmZ = -0.65;
@@ -531,7 +514,6 @@ const readJsonClean = (p) => {
                         lerp(hipElbZ, pointElbZ, pw)
                     );
                     if (rHand) {
-                        // Wrist cupped against pelvic curve; flattens out during pointing
                         rHand.rotation.set(
                             lerp(0.10, 0.0, pw),
                             lerp(-0.15, 0.0, pw),
@@ -540,42 +522,26 @@ const readJsonClean = (p) => {
                     }
                 }
 
-                // Left Arm: Hanging relaxed along side, palm facing thigh, thumb forward
-                if (lArm) {
-                    lArm.rotation.set(0.04 + breathCycle * 0.006, 0.0, 1.30);
-                }
-                if (lElbow) {
-                    lElbow.rotation.set(0.08, 0.0, 0.0); // Natural slight elbow ease, ZERO TWIST
-                }
-                if (lHand) {
-                    lHand.rotation.set(0.0, 0.0, 0.0);  // Clean neutral wrist alignment
-                }
+                if (lArm) lArm.rotation.set(0.04 + breathCycle * 0.006, 0.0, 1.30);
+                if (lElbow) lElbow.rotation.set(0.08, 0.0, 0.0);
+                if (lHand) lHand.rotation.set(0.0, 0.0, 0.0);
 
-                // --- 5. Apply Natural Cascading Fingers ---
-                poseFingersCorrect(true, false);          // Left hand: natural resting curl against thigh
-                poseFingersCorrect(false, pw > 0.05);     // Right hand: resting on hip vs pointing
+                poseFingersCorrect(true, false);
+                poseFingersCorrect(false, pw > 0.05);
 
-                // Scripted head gestures
                 if (isGestActive && gest.includes('nod') && head) {
                     head.rotation.x += Math.sin(gestAge * 9.0) * 0.10;
                 } else if (isGestActive && (gest.includes('head shake') || gest.includes('shake')) && head) {
                     head.rotation.y += Math.sin(gestAge * 8.0) * 0.14;
                 }
 
-                // --- 6. Natural Asymmetrical Blinking ---
                 const blinkPeriod = 3.8;
                 const blinkMod = t % blinkPeriod;
                 let blinkVal = 0;
-                if (blinkMod < 0.08) {
-                    blinkVal = blinkMod / 0.08;
-                } else if (blinkMod < 0.24) {
-                    blinkVal = 1.0 - ((blinkMod - 0.08) / 0.16);
-                }
-                if (vrm.blendShapeProxy) {
-                    vrm.blendShapeProxy.setValue('blink', blinkVal);
-                }
+                if (blinkMod < 0.08) blinkVal = blinkMod / 0.08;
+                else if (blinkMod < 0.24) blinkVal = 1.0 - ((blinkMod - 0.08) / 0.16);
+                if (vrm.blendShapeProxy) vrm.blendShapeProxy.setValue('blink', blinkVal);
 
-                // --- 7. Lip Sync & Expression ---
                 const targetVowel = visemeMap[phoneme] || null;
                 if (targetVowel !== activeViseme) {
                     if (activeViseme) vrm.blendShapeProxy.setValue(activeViseme, 0);
@@ -606,10 +572,8 @@ const readJsonClean = (p) => {
                     vrm.blendShapeProxy.setValue('fun', 0.16);
                 }
 
-                // Update spring bones for hair physics
                 vrm.update(1 / 30);
 
-                // --- 8. HUD Graphic Overlay (Left Side Space) ---
                 if (activeOverlay && overlayTextures[activeOverlay.toLowerCase()]) {
                     const tex = overlayTextures[activeOverlay.toLowerCase()];
                     if (overlayMat.map !== tex) {
@@ -636,7 +600,6 @@ const readJsonClean = (p) => {
                     overlayMat.opacity = Math.max(0.0, overlayMat.opacity - 0.15);
                 }
 
-                // --- 9. Lower-Third Dynamic Graphic Banner ---
                 if (ltTitle && ltAge <= 3.0) {
                     if (ltTitle !== currentLtText) {
                         currentLtText = ltTitle;

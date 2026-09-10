@@ -66,7 +66,7 @@ namespace PodcastEngine.Api.Services
             Directory.CreateDirectory(_storageBase);
         }
 
-        public async Task ExecutePipelineAsync(string jobId, string script, string sessionDir, CancellationToken ct)
+        public async Task ExecutePipelineAsync(string jobId, string script, string sessionDir, string avatar, CancellationToken ct)
         {
             ct.ThrowIfCancellationRequested();
 
@@ -248,10 +248,10 @@ namespace PodcastEngine.Api.Services
             // =========================================================
             // STEP 4: BATCHED WEBGL COMPOSITE (70% -> 100%)
             // =========================================================
-            _progress.Report(jobId, 4, 0, 70, "[Three.js] Initializing Headless Chromium WebGL context...");
+            _progress.Report(jobId, 4, 0, 70, $"[Three.js] Initializing Headless Chromium WebGL context for avatar: {avatar}...");
             string outputMp4 = Path.Combine(sessionDir, "podcast.mp4");
 
-            await RenderAvatarAsync(jobId, sessionDir, timelinePath, phonemesJsonPath, masterMixWav, outputMp4, ct);
+            await RenderAvatarAsync(jobId, sessionDir, timelinePath, phonemesJsonPath, masterMixWav, outputMp4, avatar, ct);
             _progress.Report(jobId, 4, 100, 100, "[Render Complete] Video broadcast exported: podcast.mp4", "completed");
         }
 
@@ -339,7 +339,6 @@ namespace PodcastEngine.Api.Services
 
         private async Task SynthesizeSegmentSpeechAsync(string text, string outputPath, CancellationToken ct)
         {
-            // Scoreline normalization: e.g. "1-0" -> "1 0", "২-১" -> "২ ১"
             text = System.Text.RegularExpressions.Regex.Replace(text, @"(?<=[\d\u09E6-\u09EF])\s*[-\u2013\u2014]\s*(?=[\d\u09E6-\u09EF])", " ");
             text = System.Text.RegularExpressions.Regex.Replace(text, @"(?<=[০-৯])\s*[-–—]\s*(?=[০-৯])", " ");
             string txtFile = Path.ChangeExtension(outputPath, ".txt");
@@ -505,21 +504,12 @@ namespace PodcastEngine.Api.Services
             p.BeginErrorReadLine();
 
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            // Replace the ticker task loop inside GeneratePhonemesAsync with this clean version:
             var ticker = Task.Run(async () =>
             {
                 int cur = 5;
                 while (!p.HasExited)
                 {
-                    try
-                    {
-                        await Task.Delay(500);
-                    }
-                    catch
-                    {
-                        break;
-                    }
-
+                    try { await Task.Delay(500); } catch { break; }
                     if (p.HasExited || cts.Token.IsCancellationRequested) break;
 
                     if (cur < 95)
@@ -594,12 +584,12 @@ namespace PodcastEngine.Api.Services
                 throw new InvalidOperationException($"FFmpeg mastering failed (Exit {p.ExitCode}): {err}");
         }
 
-        private async Task RenderAvatarAsync(string jobId, string sessionDir, string timelinePath, string phonemesPath, string audioPath, string outputPath, CancellationToken ct)
+        private async Task RenderAvatarAsync(string jobId, string sessionDir, string timelinePath, string phonemesPath, string audioPath, string outputPath, string avatar, CancellationToken ct)
         {
             var psi = new ProcessStartInfo
             {
                 FileName = "node",
-                Arguments = $"render_avatar.js \"{sessionDir}\" \"{timelinePath}\" \"{phonemesPath}\" \"{audioPath}\" \"{outputPath}\"",
+                Arguments = $"render_avatar.js \"{sessionDir}\" \"{timelinePath}\" \"{phonemesPath}\" \"{audioPath}\" \"{outputPath}\" \"{avatar}\"",
                 WorkingDirectory = PathHelper.AvatarRendererBase,
                 CreateNoWindow = true,
                 UseShellExecute = false,
@@ -634,6 +624,3 @@ namespace PodcastEngine.Api.Services
         }
     }
 }
-
-
-

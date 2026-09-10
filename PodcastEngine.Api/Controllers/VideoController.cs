@@ -30,12 +30,14 @@ namespace PodcastEngine.Api.Controllers
         [HttpPost("start")]
         [HttpPost("start-job")]
         [RequestSizeLimit(100_000_000)]
-        public async Task<IActionResult> Start([FromForm] string script, [FromForm] IFormFileCollection? files)
+        public async Task<IActionResult> Start([FromForm] string script, [FromForm] IFormFileCollection? files, [FromForm] string? avatar)
         {
             string jobId = Guid.NewGuid().ToString("N")[..8];
             string sessionDir = Path.Combine(PathHelper.StorageBase, jobId);
             string overlaysDir = Path.Combine(sessionDir, "overlays");
             Directory.CreateDirectory(overlaysDir);
+
+            string chosenAvatar = string.IsNullOrWhiteSpace(avatar) ? "mina" : avatar.Trim().ToLower();
 
             if (files != null)
             {
@@ -56,7 +58,7 @@ namespace PodcastEngine.Api.Controllers
             {
                 try
                 {
-                    await _pipeline.ExecutePipelineAsync(jobId, script, sessionDir, jobToken);
+                    await _pipeline.ExecutePipelineAsync(jobId, script, sessionDir, chosenAvatar, jobToken);
                 }
                 catch (OperationCanceledException)
                 {
@@ -111,5 +113,3 @@ namespace PodcastEngine.Api.Controllers
         }
     }
 }
-
-

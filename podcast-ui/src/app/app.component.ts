@@ -77,6 +77,24 @@ import { AssetInspectorManager } from './components/asset-inspector';
         </div>
       </div>
 
+      <!-- Avatar Selection Radio Buttons -->
+      <div style="margin-top: 18px; padding: 12px 16px; background: #0f172a; border: 1px solid #334155; border-radius: 8px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px;">
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <span style="font-size: 15px;">👤</span>
+          <span style="font-weight: 600; color: #e2e8f0; font-size: 14px;">Select 3D Avatar:</span>
+        </div>
+        <div style="display: flex; gap: 20px; align-items: center;">
+          <label style="display: flex; align-items: center; gap: 6px; cursor: pointer; color: #f8fafc; font-size: 14px; font-weight: 500;">
+            <input type="radio" name="avatarChoice" value="mina" [(ngModel)]="selectedAvatar" style="accent-color: #38bdf8; cursor: pointer;">
+            Mina <span style="font-size: 11px; color: #38bdf8; background: rgba(56, 189, 248, 0.15); padding: 1px 6px; border-radius: 4px; border: 1px solid rgba(56, 189, 248, 0.3);">Default</span>
+          </label>
+          <label style="display: flex; align-items: center; gap: 6px; cursor: pointer; color: #f8fafc; font-size: 14px; font-weight: 500;">
+            <input type="radio" name="avatarChoice" value="tina" [(ngModel)]="selectedAvatar" style="accent-color: #38bdf8; cursor: pointer;">
+            Tina
+          </label>
+        </div>
+      </div>
+
       <!-- Action & Cancel Buttons -->
       <div style="margin-top: 18px; display: flex; align-items: center; gap: 14px;">
         <button
@@ -215,6 +233,8 @@ export class AppComponent implements OnDestroy {
 
   public inspector = new AssetInspectorManager();
 
+  selectedAvatar: string = 'mina';
+
   scriptText: string = `[LowerThird: "Welcome to beingabong"] [SFX: Whoosh]
 [Cam: Mid] [Emotion: Joy]
 Hey guys, welcome back to the podcast!
@@ -335,6 +355,7 @@ Hey guys, welcome back to the podcast!
 
     const payload = new FormData();
     payload.append('script', this.scriptText);
+    payload.append('avatar', this.selectedAvatar);
     this.inspector.appendToFormData(payload);
 
     this.http.post<{ jobId: string }>('http://localhost:5000/api/video/start-job', payload)
@@ -417,7 +438,6 @@ Hey guys, welcome back to the podcast!
           }, 10);
         }
 
-        // Completion only occurs when FFmpeg explicitly reports completion or status is completed
         const isFinished = data.status === 'completed' || 
                            (msg && msg.includes('Render Complete'));
 
