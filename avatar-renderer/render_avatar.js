@@ -109,7 +109,7 @@ const readJsonClean = (p) => {
         <script src="https://unpkg.com/three@0.146.0/build/three.min.js"></script>
         <script src="https://unpkg.com/three@0.146.0/examples/js/loaders/GLTFLoader.js"></script>
         <script src="https://unpkg.com/@pixiv/three-vrm@0.6.11/lib/three-vrm.min.js"></script>
-        <style>body { margin: 0; overflow: hidden; background: #07090e; }</style>
+        <style>body { margin: 0; overflow: hidden; background: #f5f7fa; }</style>
     </head>
     <body>
         <canvas id="canvas" width="1920" height="1080"></canvas>
@@ -124,40 +124,25 @@ const readJsonClean = (p) => {
             let activeViseme = null;
             let activeEmotionKey = null;
 
+            // VRoid Hub Studio Light Backdrop
             function createStudioBackdrop() {
                 const bgCanvas = document.createElement('canvas');
                 bgCanvas.width = 1920;
                 bgCanvas.height = 1080;
                 const ctx = bgCanvas.getContext('2d');
 
-                const grad = ctx.createRadialGradient(1400, 480, 90, 1100, 540, 1100);
-                grad.addColorStop(0, '#1c2738');
-                grad.addColorStop(0.45, '#0e1524');
-                grad.addColorStop(1, '#05070c');
+                const grad = ctx.createRadialGradient(960, 480, 150, 960, 540, 1100);
+                grad.addColorStop(0, '#ffffff');
+                grad.addColorStop(0.55, '#f5f7fa');
+                grad.addColorStop(1, '#e8ebf0');
                 ctx.fillStyle = grad;
                 ctx.fillRect(0, 0, 1920, 1080);
 
-                ctx.strokeStyle = 'rgba(255, 255, 255, 0.025)';
-                ctx.lineWidth = 2;
-                for (let x = 0; x < 1920; x += 36) {
-                    ctx.beginPath();
-                    ctx.moveTo(x, 0);
-                    ctx.lineTo(x, 1080);
-                    ctx.stroke();
-                }
-
-                ctx.strokeStyle = 'rgba(56, 189, 248, 0.22)';
-                ctx.lineWidth = 5;
-                ctx.beginPath(); ctx.moveTo(100, 180); ctx.lineTo(360, 180); ctx.stroke();
-
-                ctx.strokeStyle = 'rgba(244, 63, 94, 0.18)';
-                ctx.beginPath(); ctx.moveTo(1560, 180); ctx.lineTo(1820, 180); ctx.stroke();
-
                 const texture = new THREE.CanvasTexture(bgCanvas);
-                const geo = new THREE.PlaneGeometry(8, 4.5);
+                const geo = new THREE.PlaneGeometry(12, 6.75);
                 const mat = new THREE.MeshBasicMaterial({ map: texture });
                 const mesh = new THREE.Mesh(geo, mat);
-                mesh.position.set(0, 1.35, -2.5);
+                mesh.position.set(0, 1.25, -2.5);
                 mesh.matrixAutoUpdate = false;
                 mesh.updateMatrix();
                 scene.add(mesh);
@@ -190,8 +175,8 @@ const readJsonClean = (p) => {
             function renderLowerThirdCanvas(title) {
                 ltContext.clearRect(0, 0, 960, 160);
 
-                ltContext.fillStyle = 'rgba(10, 15, 26, 0.94)';
-                ltContext.strokeStyle = 'rgba(56, 189, 248, 0.35)';
+                ltContext.fillStyle = 'rgba(15, 23, 42, 0.95)';
+                ltContext.strokeStyle = 'rgba(56, 189, 248, 0.40)';
                 ltContext.lineWidth = 3;
                 ltContext.beginPath();
                 ltContext.roundRect(10, 10, 940, 140, [14]);
@@ -238,7 +223,7 @@ const readJsonClean = (p) => {
 
                 renderer = new THREE.WebGLRenderer({
                     canvas,
-                    antialias: false,
+                    antialias: true,
                     stencil: false,
                     depth: true,
                     alpha: false,
@@ -246,35 +231,43 @@ const readJsonClean = (p) => {
                 });
                 renderer.setSize(1920, 1080);
                 renderer.setPixelRatio(1);
-                renderer.outputEncoding = THREE.sRGBEncoding;
+                renderer.setClearColor(0xf5f7fa, 1);
+
+                // Disable tone mapping and extra gamma encoding to preserve original MToon colors
+                renderer.outputEncoding = THREE.LinearEncoding;
+                renderer.toneMapping = THREE.NoToneMapping;
                 renderer.autoClear = false;
 
                 scene = new THREE.Scene();
-                camera = new THREE.PerspectiveCamera(26, 1920 / 1080, 0.1, 20);
+                camera = new THREE.PerspectiveCamera(28, 1920 / 1080, 0.1, 20);
                 window.__camera = camera;
 
-                camera.position.set(-0.32, 1.34, 1.38);
-                window.__camLook = new THREE.Vector3(-0.32, 1.32, 0);
+                camera.position.set(-0.38, 1.18, 2.25);
+                window.__camLook = new THREE.Vector3(-0.38, 1.15, 0);
                 camera.lookAt(window.__camLook);
                 scene.add(camera);
 
                 createStudioBackdrop();
                 setupOrthographicHUD();
 
-                const hemi = new THREE.HemisphereLight(0xffffff, 0x1e293b, 0.95);
-                scene.add(hemi);
+                // 1. Soft Warm Ambient Fill: Preserves true blacks and dark brown hair
+                const ambientLight = new THREE.AmbientLight(0xfff5ee, 0.28);
+                scene.add(ambientLight);
 
-                const keyLight = new THREE.DirectionalLight(0xfff3e0, 1.45);
-                keyLight.position.set(1.4, 2.0, 2.0);
+                // 2. Front Key Light: Clean cel-shading under chin, bangs, and collar
+                const keyLight = new THREE.DirectionalLight(0xffffff, 0.82);
+                keyLight.position.set(0.5, 1.6, 1.5).normalize();
                 scene.add(keyLight);
 
-                const cyanRim = new THREE.DirectionalLight(0x38bdf8, 1.2);
-                cyanRim.position.set(-2.0, 1.8, -0.8);
-                scene.add(cyanRim);
+                // 3. VRoid Hub Signature Golden Rim: Yellow edge glow along right shoulder and hair
+                const goldRim = new THREE.DirectionalLight(0xffb703, 1.15);
+                goldRim.position.set(-1.6, 1.4, -1.0).normalize();
+                scene.add(goldRim);
 
-                const pinkRim = new THREE.DirectionalLight(0xf43f5e, 1.0);
-                pinkRim.position.set(2.0, 1.6, -0.8);
-                scene.add(pinkRim);
+                // 4. Subtle Left Shoulder Definition
+                const fillRim = new THREE.DirectionalLight(0xffffff, 0.30);
+                fillRim.position.set(1.5, 1.2, -0.8).normalize();
+                scene.add(fillRim);
 
                 const textureLoader = new THREE.TextureLoader();
                 const rawMap = ${JSON.stringify(overlayMap)};
@@ -282,17 +275,25 @@ const readJsonClean = (p) => {
                     overlayTextures[key] = textureLoader.load(dataUrl);
                 }
 
-                const loader = new THREE.GLTFLoader();
-                loader.load('http://127.0.0.1:${serverPort}/avatar.vrm', (gltf) => {
+                const gltfLoader = new THREE.GLTFLoader();
+                gltfLoader.load('http://127.0.0.1:${serverPort}/avatar.vrm', (gltf) => {
                     parseFn.call(VRM, gltf).then((loadedVrm) => {
                         vrm = loadedVrm;
                         scene.add(vrm.scene);
                         vrm.scene.rotation.y = Math.PI;
                         vrm.scene.position.set(0, 0, 0);
 
-                        if (vrm.lookAt) {
-                            vrm.lookAt.target = null;
-                        }
+                        // Ensure materials output direct texture colors
+                        vrm.scene.traverse((obj) => {
+                            if (obj.isMesh && obj.material) {
+                                const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+                                mats.forEach(m => {
+                                    m.toneMapped = false;
+                                });
+                            }
+                        });
+
+                        if (vrm.lookAt) vrm.lookAt.target = null;
 
                         window.__ready = true;
                     }).catch(err => console.error("VRM initialization error:", err));
@@ -307,6 +308,7 @@ const readJsonClean = (p) => {
                 const lerp = (a, b, alpha) => a + (b - a) * alpha;
 
                 // --- 1. Bone Targets ---
+                const hips = vrm.humanoid.getBoneNode('hips');
                 const spine = vrm.humanoid.getBoneNode('spine');
                 const chest = vrm.humanoid.getBoneNode('chest');
                 const neck = vrm.humanoid.getBoneNode('neck');
@@ -318,20 +320,22 @@ const readJsonClean = (p) => {
                 const lElbow = vrm.humanoid.getBoneNode('leftLowerArm');
                 const lHand = vrm.humanoid.getBoneNode('leftHand');
 
-                // --- 2. Camera Framing & Dynamic Dolly ---
+                // --- 2. Camera Framing & Transitions ---
                 const cam = window.__camera || (typeof camera !== 'undefined' ? camera : null);
                 if (cam) {
-                    if (!window.__camLook) window.__camLook = new THREE.Vector3(-0.32, 1.32, 0);
+                    if (!window.__camLook) window.__camLook = new THREE.Vector3(-0.38, 1.15, 0);
 
                     const mode = (camMode || '').toLowerCase();
                     const isCloseUp = mode.includes('close') || mode.includes('zoom');
                     const isSlowZoom = mode.includes('slow zoom');
 
-                    const midPos = new THREE.Vector3(-0.32, 1.34, 1.38);
-                    const midLook = new THREE.Vector3(-0.32, 1.32, 0);
+                    // Default Mid Shot: Framed mid-thigh up on right with clean headroom
+                    const midPos = new THREE.Vector3(-0.38, 1.18, 2.25);
+                    const midLook = new THREE.Vector3(-0.38, 1.15, 0);
 
-                    const closePos = new THREE.Vector3(-0.10, 1.36, 0.88);
-                    const closeLook = new THREE.Vector3(-0.10, 1.35, 0);
+                    // Tight Face Close-Up
+                    const closePos = new THREE.Vector3(-0.10, 1.36, 1.15);
+                    const closeLook = new THREE.Vector3(-0.10, 1.36, 0);
 
                     let targetCamPos = midPos.clone();
                     let targetCamLook = midLook.clone();
@@ -356,32 +360,37 @@ const readJsonClean = (p) => {
                     cam.lookAt(window.__camLook);
                 }
 
-                // --- 3. Breathing & Head Tilt ---
-                const breathCycle = Math.sin(t * 2.1);
-                const breath = (breathCycle + 1.0) * 0.5;
+                // --- 3. Body Stance & Weight Shift ---
+                const breath = Math.sin(t * 2.1) * 0.018;
 
-                if (spine) spine.rotation.x = breathCycle * 0.015;
-                if (chest) chest.rotation.x = breathCycle * 0.022;
+                if (hips) {
+                    hips.rotation.z = -0.04;
+                    hips.position.x = 0.012;
+                }
+                if (spine) {
+                    spine.rotation.x = breath * 0.4;
+                    spine.rotation.z = 0.025;
+                }
+                if (chest) {
+                    chest.rotation.x = breath * 0.6;
+                }
 
-                const baseHeadRollZ = -0.22;
-                const baseHeadYawY = -0.08;
-                const baseHeadPitchX = -0.05;
-
+                // Head: Confident slight chin lift & subtle tilt
                 const isSpeaking = phoneme && phoneme !== 'X';
                 const nod = isSpeaking ? Math.sin(t * 3.6) * 0.022 : Math.sin(t * 1.1) * 0.008;
 
                 if (head) {
                     head.rotation.set(
-                        baseHeadPitchX + nod,
-                        baseHeadYawY + Math.sin(t * 0.5) * 0.012,
-                        baseHeadRollZ + Math.sin(t * 0.7) * 0.008
+                        -0.06 + nod,
+                        0.04 + Math.sin(t * 0.6) * 0.015,
+                        -0.06 + Math.sin(t * 0.8) * 0.01
                     );
                 }
                 if (neck) {
-                    neck.rotation.set(nod * 0.35, -0.04, -0.06);
+                    neck.rotation.set(nod * 0.35, 0.02, -0.02);
                 }
 
-                // --- 4. Authentic Crossed-Arms Geometry & Pointing ---
+                // --- 4. Anatomically Correct Arms & Hands ---
                 const hasOverlay = Boolean(activeOverlay);
                 const gest = (activeGesture || '').toLowerCase();
                 const isGestActive = gest && gestAge <= 2.5;
@@ -391,96 +400,86 @@ const readJsonClean = (p) => {
                 window.__pointingWeight = lerp(window.__pointingWeight, shouldPoint ? 1.0 : 0.0, 0.08);
                 const pw = window.__pointingWeight;
 
-                // Left Arm: Folded across chest underneath right arm
-                if (lArm) {
-                    lArm.rotation.set(0.46 + breath * 0.012, 0.38, 1.18);
-                }
-                if (lElbow) {
-                    lElbow.rotation.set(0.08, -1.72, -0.12);
-                }
-                if (lHand) {
-                    lHand.rotation.set(0.12, 0.32, 0.22);
-                }
-
-                // Right Arm: Folded across chest resting over left arm vs. Pointing
+                // Right Arm (Tattoo): Hand-on-hip pose vs. Pointing towards overlay
                 if (rArm && rElbow) {
-                    const foldArmX = 0.50 + breath * 0.012;
-                    const foldArmY = -0.38;
-                    const foldArmZ = -1.18;
-                    const foldElbX = -0.08;
-                    const foldElbY = 1.72;
-                    const foldElbZ = 0.12;
+                    const hipArmX = -0.18 + breath * 0.2;
+                    const hipArmY = 0.12;
+                    const hipArmZ = -1.18;
+                    const hipElbX = -1.25;
+                    const hipElbY = 0.0;
+                    const hipElbZ = -0.08;
 
                     const pointArmX = 0.45;
-                    const pointArmY = 0.52;
+                    const pointArmY = 0.40;
                     const pointArmZ = -0.65;
-                    const pointElbX = -0.40;
-                    const pointElbY = 0.25;
+                    const pointElbX = -0.30;
+                    const pointElbY = 0.0;
                     const pointElbZ = 0.0;
 
                     rArm.rotation.set(
-                        lerp(foldArmX, pointArmX, pw),
-                        lerp(foldArmY, pointArmY, pw),
-                        lerp(foldArmZ, pointArmZ, pw)
+                        lerp(hipArmX, pointArmX, pw),
+                        lerp(hipArmY, pointArmY, pw),
+                        lerp(hipArmZ, pointArmZ, pw)
                     );
                     rElbow.rotation.set(
-                        lerp(foldElbX, pointElbX, pw),
-                        lerp(foldElbY, pointElbY, pw),
-                        lerp(foldElbZ, pointElbZ, pw)
+                        lerp(hipElbX, pointElbX, pw),
+                        lerp(hipElbY, pointElbY, pw),
+                        lerp(hipElbZ, pointElbZ, pw)
                     );
                     if (rHand) {
                         rHand.rotation.set(
-                            lerp(-0.10, 0.0, pw),
-                            lerp(-0.32, 0.0, pw),
-                            lerp(-0.22, -0.1, pw)
+                            lerp(0.12, 0.0, pw),
+                            lerp(0.0, 0.0, pw),
+                            lerp(0.18, -0.15, pw)
                         );
                     }
                 }
 
-                // --- 5. Finger Joint Curling (Eliminates Flat Mannequin Hands) ---
+                // Left Arm (Wristband): Relaxed along side, palm facing thigh, thumb forward
+                if (lArm) {
+                    lArm.rotation.set(0.08 + breath * 0.2, 0.0, 1.25);
+                }
+                if (lElbow) {
+                    lElbow.rotation.set(0.18, 0.0, 0.0);
+                }
+                if (lHand) {
+                    lHand.rotation.set(-0.05, 0.0, 0.0);
+                }
+
+                // --- 5. Natural Finger Curls ---
                 const fingerBones = ['Index', 'Middle', 'Ring', 'Little'];
 
-                // Left Hand Fingers: Curled naturally over right bicep with thumb pointing up
                 fingerBones.forEach(f => {
                     const p = vrm.humanoid.getBoneNode('left' + f + 'Proximal');
                     const i = vrm.humanoid.getBoneNode('left' + f + 'Intermediate');
                     const d = vrm.humanoid.getBoneNode('left' + f + 'Distal');
-                    if (p) p.rotation.z = -0.52;
-                    if (i) i.rotation.z = -0.62;
-                    if (d) d.rotation.z = -0.42;
+                    if (p) p.rotation.z = -0.22;
+                    if (i) i.rotation.z = -0.28;
+                    if (d) d.rotation.z = -0.18;
                 });
                 const ltp = vrm.humanoid.getBoneNode('leftThumbProximal');
-                const lti = vrm.humanoid.getBoneNode('leftThumbIntermediate');
-                const ltd = vrm.humanoid.getBoneNode('leftThumbDistal');
-                if (ltp) ltp.rotation.set(0.18, -0.22, -0.18);
-                if (lti) lti.rotation.set(0, 0, -0.12);
-                if (ltd) ltd.rotation.set(0, 0, -0.08);
+                if (ltp) ltp.rotation.set(0.10, -0.10, -0.10);
 
-                // Right Hand Fingers: Curled around left arm when folded; uncurls when pointing
-                const rCurl = lerp(0.52, 0.12, pw);
+                const rCurl = lerp(0.24, 0.06, pw);
                 fingerBones.forEach(f => {
                     const p = vrm.humanoid.getBoneNode('right' + f + 'Proximal');
                     const i = vrm.humanoid.getBoneNode('right' + f + 'Intermediate');
                     const d = vrm.humanoid.getBoneNode('right' + f + 'Distal');
                     if (p) p.rotation.z = rCurl;
-                    if (i) i.rotation.z = rCurl * 1.15;
-                    if (d) d.rotation.z = rCurl * 0.85;
+                    if (i) i.rotation.z = rCurl * 1.1;
+                    if (d) d.rotation.z = rCurl * 0.8;
                 });
                 const rtp = vrm.humanoid.getBoneNode('rightThumbProximal');
-                const rti = vrm.humanoid.getBoneNode('rightThumbIntermediate');
-                const rtd = vrm.humanoid.getBoneNode('rightThumbDistal');
-                if (rtp) rtp.rotation.set(-0.18, 0.22, rCurl * 0.4);
-                if (rti) rti.rotation.set(0, 0, rCurl * 0.3);
-                if (rtd) rtd.rotation.set(0, 0, rCurl * 0.2);
+                if (rtp) rtp.rotation.set(-0.12, 0.10, rCurl * 0.4);
 
-                // Gestured head movements
+                // Head Gestures
                 if (isGestActive && gest.includes('nod') && head) {
                     head.rotation.x += Math.sin(gestAge * 9.0) * 0.10;
                 } else if (isGestActive && (gest.includes('head shake') || gest.includes('shake')) && head) {
                     head.rotation.y += Math.sin(gestAge * 8.0) * 0.14;
                 }
 
-                // --- 6. Natural Blinking ---
+                // --- 6. Natural Blinking & Facial Presence ---
                 const blinkCycle = t % 3.6;
                 const blinkVal = blinkCycle < 0.16 ? Math.sin((blinkCycle / 0.16) * Math.PI) : 0;
                 if (vrm.blendShapeProxy) {
@@ -515,12 +514,12 @@ const readJsonClean = (p) => {
 
                 if (activeEmotionKey === 'neutral' && vrm.blendShapeProxy) {
                     vrm.blendShapeProxy.setValue('joy', 0.10);
-                    vrm.blendShapeProxy.setValue('fun', 0.18);
+                    vrm.blendShapeProxy.setValue('fun', 0.16);
                 }
 
                 vrm.update(1 / 30);
 
-                // --- 8. HUD Graphic Overlay ---
+                // --- 8. HUD Graphic Overlay (Left Side Space) ---
                 if (activeOverlay && overlayTextures[activeOverlay.toLowerCase()]) {
                     const tex = overlayTextures[activeOverlay.toLowerCase()];
                     if (overlayMat.map !== tex) {
@@ -547,7 +546,7 @@ const readJsonClean = (p) => {
                     overlayMat.opacity = Math.max(0.0, overlayMat.opacity - 0.15);
                 }
 
-                // --- 9. Lower-Third Graphic Banner ---
+                // --- 9. Lower-Third Dynamic Graphic Banner ---
                 if (ltTitle && ltAge <= 3.0) {
                     if (ltTitle !== currentLtText) {
                         currentLtText = ltTitle;
@@ -573,7 +572,7 @@ const readJsonClean = (p) => {
                 renderer.render(scene, camera);
                 renderer.render(hudScene, hudCamera);
 
-                return window.__canvas.toDataURL('image/jpeg', 0.75);
+                return window.__canvas.toDataURL('image/jpeg', 0.85);
             };
 
             window.renderFrameBatch = function(configs) {
