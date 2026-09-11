@@ -70,12 +70,50 @@ namespace PodcastEngine.Api.Services
         {
             ct.ThrowIfCancellationRequested();
 
-            // =========================================================
-            // STEP 1: PARALLEL VOICE SYNTHESIS & TIMELINE SYNC (0% -> 25%)
-            // =========================================================
             _progress.Report(jobId, 1, 0, 0, "[TTS] Parsing script segments and scheduling parallel synthesis...");
 
-            var rawParagraphs = script.Split(new[] { "\r\n\r\n", "\n\n" }, StringSplitOptions.RemoveEmptyEntries);
+            // Split on blank lines OR whenever a directive block begins after speech
+            var lines = script.Split(new[] { "\r\n", "\n" }, StringSplitOptions.None);
+            var rawParagraphsList = new List<string>();
+            var currentBlock = new StringBuilder();
+            bool blockHasSpeech = false;
+
+            foreach (var line in lines)
+            {
+                string trimmed = line.Trim();
+                if (string.IsNullOrWhiteSpace(trimmed))
+                {
+                    if (currentBlock.Length > 0)
+                    {
+                        rawParagraphsList.Add(currentBlock.ToString().Trim());
+                        currentBlock.Clear();
+                        blockHasSpeech = false;
+                    }
+                    continue;
+                }
+
+                bool isDirectiveLine = trimmed.StartsWith("[") && Regex.IsMatch(trimmed, @"^\[[a-zA-Z0-9_\s-]+:");
+                if (blockHasSpeech && isDirectiveLine)
+                {
+                    rawParagraphsList.Add(currentBlock.ToString().Trim());
+                    currentBlock.Clear();
+                    blockHasSpeech = false;
+                }
+
+                currentBlock.AppendLine(line);
+                string textWithoutTags = Regex.Replace(trimmed, @"\[.*?\]", "").Trim();
+                if (!string.IsNullOrEmpty(textWithoutTags))
+                {
+                    blockHasSpeech = true;
+                }
+            }
+
+            if (currentBlock.Length > 0)
+            {
+                rawParagraphsList.Add(currentBlock.ToString().Trim());
+            }
+
+            var rawParagraphs = rawParagraphsList.ToArray();
             var parsedSegments = new List<ScriptSegment>();
 
             for (int pIdx = 0; pIdx < rawParagraphs.Length; pIdx++)
@@ -179,7 +217,6 @@ namespace PodcastEngine.Api.Services
                 if (!string.IsNullOrEmpty(seg.LowerThird))
                     timeline.Add(new TimelineEvent { time = runningTime, type = "lowerthird", value = seg.LowerThird });
 
-                // Overlay Lifecycle: Show when requested; dismiss automatically when paragraph starts without a [Show] tag
                 if (!string.IsNullOrEmpty(seg.Show))
                 {
                     timeline.Add(new TimelineEvent { time = runningTime, type = "show", value = seg.Show, position = seg.ShowPos });
@@ -227,9 +264,6 @@ namespace PodcastEngine.Api.Services
             await ConcatWavsAsync(orderedAudioFiles, rawSpeechWav, ct);
             _progress.Report(jobId, 1, 100, 25, $"[TTS] Master speech track assembled. Total length: {runningTime:F1}s");
 
-            // =========================================================
-            // STEP 2: RHUBARB LIP SYNC (25% -> 50%)
-            // =========================================================
             _progress.Report(jobId, 2, 0, 25, "[Rhubarb] Generating phonemes aligned to speech master...");
             string phonemesJsonPath = Path.Combine(sessionDir, "phonemes.json");
 
@@ -247,9 +281,6 @@ namespace PodcastEngine.Api.Services
             string timelinePath = Path.Combine(sessionDir, "timeline.json");
             await File.WriteAllTextAsync(timelinePath, JsonSerializer.Serialize(timeline, new JsonSerializerOptions { WriteIndented = true }), new UTF8Encoding(false), ct);
 
-            // =========================================================
-            // STEP 3: STREAMLINED BGM & SFX DUCKING (50% -> 70%)
-            // =========================================================
             _progress.Report(jobId, 3, 0, 50, "[FFmpeg] Building dynamic soundtrack and sidechain ducking...");
             string bgmMasterWav = Path.Combine(sessionDir, "bgm_composed.wav");
             await BuildCompositeBgmTrackAsync(bgmCues, runningTime, bgmMasterWav, ct);
@@ -258,9 +289,6 @@ namespace PodcastEngine.Api.Services
             await ApplySidechainDuckingAndSfxAsync(rawSpeechWav, bgmMasterWav, sfxCues, masterMixWav, jobId, ct);
             _progress.Report(jobId, 3, 100, 70, "[FFmpeg] Sidechain ducking applied. Master mix ready.");
 
-            // =========================================================
-            // STEP 4: BATCHED WEBGL COMPOSITE (70% -> 100%)
-            // =========================================================
             _progress.Report(jobId, 4, 0, 70, $"[Three.js] Initializing Headless Chromium WebGL context for avatar: {avatar}...");
             string outputMp4 = Path.Combine(sessionDir, "podcast.mp4");
 

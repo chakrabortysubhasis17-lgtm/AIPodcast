@@ -84,7 +84,6 @@ const readJsonClean = (p) => {
         }
     };
 
-    // Scan both sessionDir root and overlays/ folder
     readDirToMap(path.join(sessionDir, 'overlays'));
     readDirToMap(sessionDir);
 
@@ -105,6 +104,9 @@ const readJsonClean = (p) => {
     });
 
     const page = await browser.newPage();
+    page.setDefaultNavigationTimeout(120000);
+    page.setDefaultTimeout(120000);
+
     page.on('pageerror', err => console.log('LOG:[Chromium PageError] ' + err.message));
     page.on('console', msg => {
         const text = msg.text();
@@ -142,46 +144,79 @@ const readJsonClean = (p) => {
             let saccadeCurrX = 0;
             let saccadeCurrY = 0;
 
-            function createStudioBackdrop() {
-                const bgCanvas = document.createElement('canvas');
-                bgCanvas.width = 1920;
-                bgCanvas.height = 1080;
-                const ctx = bgCanvas.getContext('2d');
+            let smoothedSpeechPitch = 0.0;
+            let smoothedSpeechYaw = 0.0;
 
-                const grad = ctx.createRadialGradient(960, 480, 160, 960, 540, 1100);
-                grad.addColorStop(0, '#ffffff');
-                grad.addColorStop(0.60, '#f8fafc');
-                grad.addColorStop(1, '#e9edf3');
-                ctx.fillStyle = grad;
-                ctx.fillRect(0, 0, 1920, 1080);
+            // Explicit Camera Presets
+            const POS_FULL = new THREE.Vector3(-0.42, 0.82, 3.80);
+            const LOOK_FULL = new THREE.Vector3(-0.42, 0.78, 0);
 
-                const texture = new THREE.CanvasTexture(bgCanvas);
-                const geo = new THREE.PlaneGeometry(14, 8);
-                const mat = new THREE.MeshBasicMaterial({ map: texture });
-                const mesh = new THREE.Mesh(geo, mat);
-                mesh.position.set(0, 1.25, -2.5);
-                mesh.matrixAutoUpdate = false;
-                mesh.updateMatrix();
-                scene.add(mesh);
+            const POS_MID = new THREE.Vector3(-0.35, 1.08, 2.35);
+            const LOOK_MID = new THREE.Vector3(-0.35, 1.05, 0);
+
+            const POS_CLOSE = new THREE.Vector3(-0.22, 1.28, 1.15);
+            const LOOK_CLOSE = new THREE.Vector3(-0.22, 1.25, 0);
+
+            function createStudioEnvironment() {
+                const floorCanvas = document.createElement('canvas');
+                floorCanvas.width = 1024;
+                floorCanvas.height = 1024;
+                const fCtx = floorCanvas.getContext('2d');
+
+                const fGrad = fCtx.createRadialGradient(512, 512, 80, 512, 512, 500);
+                fGrad.addColorStop(0, '#ffffff');
+                fGrad.addColorStop(0.70, '#f1f5f9');
+                fGrad.addColorStop(1, '#e2e8f0');
+                fCtx.fillStyle = fGrad;
+                fCtx.fillRect(0, 0, 1024, 1024);
+
+                const floorTex = new THREE.CanvasTexture(floorCanvas);
+                const floorGeo = new THREE.PlaneGeometry(30, 30);
+                const floorMat = new THREE.MeshBasicMaterial({ map: floorTex });
+                const floorMesh = new THREE.Mesh(floorGeo, floorMat);
+                floorMesh.rotation.x = -Math.PI / 2;
+                floorMesh.position.set(0, 0, 0);
+                scene.add(floorMesh);
 
                 const shadowCanvas = document.createElement('canvas');
                 shadowCanvas.width = 512;
                 shadowCanvas.height = 512;
                 const sCtx = shadowCanvas.getContext('2d');
-                const sGrad = sCtx.createRadialGradient(256, 256, 10, 256, 256, 240);
-                sGrad.addColorStop(0, 'rgba(30, 41, 59, 0.35)');
-                sGrad.addColorStop(0.4, 'rgba(51, 65, 85, 0.15)');
+
+                const sGrad = sCtx.createRadialGradient(256, 256, 25, 256, 256, 230);
+                sGrad.addColorStop(0, 'rgba(15, 23, 42, 0.65)');
+                sGrad.addColorStop(0.40, 'rgba(30, 41, 59, 0.30)');
+                sGrad.addColorStop(0.75, 'rgba(51, 65, 85, 0.08)');
                 sGrad.addColorStop(1, 'rgba(255, 255, 255, 0.0)');
                 sCtx.fillStyle = sGrad;
                 sCtx.fillRect(0, 0, 512, 512);
 
                 const sTex = new THREE.CanvasTexture(shadowCanvas);
-                const sGeo = new THREE.PlaneGeometry(1.6, 1.6);
-                const sMat = new THREE.MeshBasicMaterial({ map: sTex, transparent: true, opacity: 0.85 });
+                const sGeo = new THREE.PlaneGeometry(1.5, 0.95);
+                const sMat = new THREE.MeshBasicMaterial({ map: sTex, transparent: true, opacity: 0.85, depthWrite: false });
                 const floorShadow = new THREE.Mesh(sGeo, sMat);
                 floorShadow.rotation.x = -Math.PI / 2;
-                floorShadow.position.set(0, 0.005, 0);
+                floorShadow.position.set(0.04, 0.002, 0.02);
                 scene.add(floorShadow);
+
+                const bgCanvas = document.createElement('canvas');
+                bgCanvas.width = 1920;
+                bgCanvas.height = 1080;
+                const ctx = bgCanvas.getContext('2d');
+
+                const grad = ctx.createLinearGradient(0, 1080, 0, 0);
+                grad.addColorStop(0, '#e2e8f0');
+                grad.addColorStop(0.40, '#f8fafc');
+                grad.addColorStop(1, '#ffffff');
+                ctx.fillStyle = grad;
+                ctx.fillRect(0, 0, 1920, 1080);
+
+                const bgTex = new THREE.CanvasTexture(bgCanvas);
+                const bgGeo = new THREE.PlaneGeometry(30, 16);
+                const bgMat = new THREE.MeshBasicMaterial({ map: bgTex });
+                const bgMesh = new THREE.Mesh(bgGeo, bgMat);
+                bgMesh.position.set(0, 6.0, -5.0);
+                scene.add(bgMesh);
             }
 
             function setupOrthographicHUD() {
@@ -278,33 +313,32 @@ const readJsonClean = (p) => {
                 renderer.autoClear = false;
 
                 scene = new THREE.Scene();
-                camera = new THREE.PerspectiveCamera(28, 1920 / 1080, 0.1, 20);
+                camera = new THREE.PerspectiveCamera(28, 1920 / 1080, 0.1, 30);
                 window.__camera = camera;
 
-                camera.position.set(-0.38, 1.18, 2.25);
-                window.__camLook = new THREE.Vector3(-0.38, 1.15, 0);
+                camera.position.copy(POS_FULL);
+                window.__camLook = LOOK_FULL.clone();
                 camera.lookAt(window.__camLook);
                 scene.add(camera);
 
-                createStudioBackdrop();
+                createStudioEnvironment();
                 setupOrthographicHUD();
 
-                const ambientLight = new THREE.AmbientLight(0xfff5ee, 0.28);
+                const ambientLight = new THREE.AmbientLight(0xfff8f0, 0.35);
                 scene.add(ambientLight);
 
-                const keyLight = new THREE.DirectionalLight(0xffffff, 0.82);
-                keyLight.position.set(0.5, 1.6, 1.5).normalize();
+                const keyLight = new THREE.DirectionalLight(0xffffff, 0.85);
+                keyLight.position.set(0.6, 1.8, 2.0).normalize();
                 scene.add(keyLight);
 
-                const goldRim = new THREE.DirectionalLight(0xffb703, 1.2);
-                goldRim.position.set(-1.6, 1.4, -1.0).normalize();
+                const goldRim = new THREE.DirectionalLight(0xffb703, 1.15);
+                goldRim.position.set(-1.8, 1.6, -1.2).normalize();
                 scene.add(goldRim);
 
-                const fillRim = new THREE.DirectionalLight(0xffffff, 0.28);
-                fillRim.position.set(1.5, 1.2, -0.8).normalize();
+                const fillRim = new THREE.DirectionalLight(0xffffff, 0.30);
+                fillRim.position.set(1.6, 1.3, -1.0).normalize();
                 scene.add(fillRim);
 
-                // Pre-decode overlay images into Three.js textures
                 const rawMap = ${JSON.stringify(overlayMap)};
                 for (const [key, dataUrl] of Object.entries(rawMap)) {
                     await new Promise((resolve) => {
@@ -331,13 +365,18 @@ const readJsonClean = (p) => {
                         vrm = loadedVrm;
                         scene.add(vrm.scene);
 
-                        vrm.scene.rotation.y = Math.PI - 0.10;
+                        vrm.scene.rotation.y = Math.PI - 0.08;
                         vrm.scene.position.set(0, 0, 0);
 
                         vrm.scene.traverse((obj) => {
                             if (obj.isMesh && obj.material) {
                                 const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
-                                mats.forEach(m => { m.toneMapped = false; });
+                                mats.forEach(m => {
+                                    m.toneMapped = false;
+                                    if (renderer.capabilities.isWebGL2) {
+                                        m.alphaToCoverage = true;
+                                    }
+                                });
                             }
                         });
 
@@ -348,53 +387,51 @@ const readJsonClean = (p) => {
                 }, undefined, (err) => console.error("GLTF download error:", err));
             }
 
-            // Anatomical finger posing: negative Z curls inward into the palm
             function poseFingersCorrect(isLeft, isPointing) {
                 const side = isLeft ? 'left' : 'right';
 
                 if (isLeft) {
                     const configs = [
-                        { name: 'Index',  ySpread: -0.04, pZ: -0.24, iZ: -0.32, dZ: -0.20 },
-                        { name: 'Middle', ySpread:  0.00, pZ: -0.34, iZ: -0.40, dZ: -0.24 },
-                        { name: 'Ring',   ySpread:  0.05, pZ: -0.42, iZ: -0.48, dZ: -0.28 },
-                        { name: 'Little', ySpread:  0.10, pZ: -0.50, iZ: -0.56, dZ: -0.34 }
+                        { name: 'Index',  ySpread: -0.015, pZ: 0.40, iZ: 0.46, dZ: 0.28 },
+                        { name: 'Middle', ySpread:  0.000, pZ: 0.46, iZ: 0.52, dZ: 0.32 },
+                        { name: 'Ring',   ySpread:  0.015, pZ: 0.50, iZ: 0.58, dZ: 0.35 },
+                        { name: 'Little', ySpread:  0.030, pZ: 0.56, iZ: 0.64, dZ: 0.38 }
                     ];
                     configs.forEach(c => {
                         const p = vrm.humanoid.getBoneNode(side + c.name + 'Proximal');
                         const i = vrm.humanoid.getBoneNode(side + c.name + 'Intermediate');
                         const d = vrm.humanoid.getBoneNode(side + c.name + 'Distal');
-                        if (p) p.rotation.set(0, c.ySpread, c.pZ);
+                        if (p) p.rotation.set(0.04, c.ySpread, c.pZ);
                         if (i) i.rotation.set(0, 0, c.iZ);
                         if (d) d.rotation.set(0, 0, c.dZ);
                     });
                     const tp = vrm.humanoid.getBoneNode(side + 'ThumbProximal');
                     const ti = vrm.humanoid.getBoneNode(side + 'ThumbIntermediate');
                     const td = vrm.humanoid.getBoneNode(side + 'ThumbDistal');
-                    if (tp) tp.rotation.set(-0.10, -0.18, -0.15);
-                    if (ti) ti.rotation.set(0, 0, -0.12);
-                    if (td) td.rotation.set(0, 0, -0.08);
+                    if (tp) tp.rotation.set(0.18, 0.14, 0.24);
+                    if (ti) ti.rotation.set(0, 0, 0.20);
+                    if (td) td.rotation.set(0, 0, 0.15);
                 } else {
-                    // Right Hand: Resting on hip vs. Pointing with index finger
                     const configs = [
-                        { name: 'Index',  ySpread:  0.02, pZ: isPointing ? 0.00 : -0.26,  iZ: isPointing ? 0.00 : -0.32,  dZ: isPointing ? 0.00 : -0.20 },
-                        { name: 'Middle', ySpread:  0.00, pZ: isPointing ? -0.70 : -0.36, iZ: isPointing ? -0.85 : -0.40, dZ: isPointing ? -0.55 : -0.24 },
-                        { name: 'Ring',   ySpread: -0.05, pZ: isPointing ? -0.75 : -0.44, iZ: isPointing ? -0.90 : -0.48, dZ: isPointing ? -0.60 : -0.28 },
-                        { name: 'Little', ySpread: -0.10, pZ: isPointing ? -0.80 : -0.52, iZ: isPointing ? -0.95 : -0.56, dZ: isPointing ? -0.65 : -0.34 }
+                        { name: 'Index',  ySpread:  0.015, pZ: isPointing ? 0.00 : -0.40, iZ: isPointing ? 0.00 : -0.46, dZ: isPointing ? 0.00 : -0.28 },
+                        { name: 'Middle', ySpread:  0.000, pZ: isPointing ? -0.75 : -0.46, iZ: isPointing ? -0.85 : -0.52, dZ: isPointing ? -0.55 : -0.32 },
+                        { name: 'Ring',   ySpread: -0.015, pZ: isPointing ? -0.80 : -0.50, iZ: isPointing ? -0.90 : -0.58, dZ: isPointing ? -0.60 : -0.35 },
+                        { name: 'Little', ySpread: -0.030, pZ: isPointing ? -0.85 : -0.56, iZ: isPointing ? -0.95 : -0.64, dZ: isPointing ? -0.65 : -0.38 }
                     ];
                     configs.forEach(c => {
                         const p = vrm.humanoid.getBoneNode(side + c.name + 'Proximal');
                         const i = vrm.humanoid.getBoneNode(side + c.name + 'Intermediate');
                         const d = vrm.humanoid.getBoneNode(side + c.name + 'Distal');
-                        if (p) p.rotation.set(0, c.ySpread, c.pZ);
+                        if (p) p.rotation.set(0.04, c.ySpread, c.pZ);
                         if (i) i.rotation.set(0, 0, c.iZ);
                         if (d) d.rotation.set(0, 0, c.dZ);
                     });
                     const tp = vrm.humanoid.getBoneNode(side + 'ThumbProximal');
                     const ti = vrm.humanoid.getBoneNode(side + 'ThumbIntermediate');
                     const td = vrm.humanoid.getBoneNode(side + 'ThumbDistal');
-                    if (tp) tp.rotation.set(-0.12, 0.18, isPointing ? -0.25 : -0.18);
-                    if (ti) ti.rotation.set(0, 0, isPointing ? -0.20 : -0.14);
-                    if (td) td.rotation.set(0, 0, isPointing ? -0.15 : -0.10);
+                    if (tp) tp.rotation.set(-0.18, 0.14, isPointing ? -0.30 : -0.24);
+                    if (ti) ti.rotation.set(0, 0, isPointing ? -0.22 : -0.20);
+                    if (td) td.rotation.set(0, 0, isPointing ? -0.16 : -0.15);
                 }
             }
 
@@ -419,90 +456,113 @@ const readJsonClean = (p) => {
                 const lElbow = vrm.humanoid.getBoneNode('leftLowerArm');
                 const lHand = vrm.humanoid.getBoneNode('leftHand');
 
+                const lUpLeg = vrm.humanoid.getBoneNode('leftUpperLeg');
+                const lLowLeg = vrm.humanoid.getBoneNode('leftLowerLeg');
+                const lFoot = vrm.humanoid.getBoneNode('leftFoot');
+                const rUpLeg = vrm.humanoid.getBoneNode('rightUpperLeg');
+                const rLowLeg = vrm.humanoid.getBoneNode('rightLowerLeg');
+                const rFoot = vrm.humanoid.getBoneNode('rightFoot');
+
+                // Foolproof Camera Matcher (Strict isolation of slowzoom vs zoomout vs close)
                 const cam = window.__camera || (typeof camera !== 'undefined' ? camera : null);
                 if (cam) {
-                    if (!window.__camLook) window.__camLook = new THREE.Vector3(-0.38, 1.15, 0);
+                    if (!window.__camLook) window.__camLook = LOOK_FULL.clone();
 
-                    const mode = (camMode || '').toLowerCase();
-                    const isCloseUp = mode.includes('close') || mode.includes('zoom');
-                    const isSlowZoom = mode.includes('slow zoom');
+                    const mode = (camMode || '').toLowerCase().trim();
 
-                    const midPos = new THREE.Vector3(-0.38, 1.18, 2.25);
-                    const midLook = new THREE.Vector3(-0.38, 1.15, 0);
+                    let targetPos = POS_FULL;
+                    let targetLook = LOOK_FULL;
+                    let isSlow = false;
 
-                    const closePos = new THREE.Vector3(-0.10, 1.36, 1.15);
-                    const closeLook = new THREE.Vector3(-0.10, 1.36, 0);
-
-                    let targetCamPos = midPos.clone();
-                    let targetCamLook = midLook.clone();
-
-                    if (isSlowZoom) {
-                        const zoomProg = Math.min(1.0, (camAge || 0) / 4.5);
-                        targetCamPos.lerpVectors(midPos, closePos, zoomProg);
-                        targetCamLook.lerpVectors(midLook, closeLook, zoomProg);
-                    } else if (isCloseUp) {
-                        targetCamPos.copy(closePos);
-                        targetCamLook.copy(closeLook);
+                    if (mode.includes('close') || mode.includes('tight') || mode.includes('face') || mode.includes('chest')) {
+                        targetPos = POS_CLOSE;
+                        targetLook = LOOK_CLOSE;
+                    } else if (mode.includes('slowzoom') || mode.includes('slow zoom')) {
+                        isSlow = true;
+                        const prog = Math.min(1.0, Math.max(0.0, (camAge || 0) / 2.5));
+                        const ease = 0.5 - 0.5 * Math.cos(prog * Math.PI);
+                        targetPos = new THREE.Vector3().lerpVectors(POS_FULL, POS_MID, ease);
+                        targetLook = new THREE.Vector3().lerpVectors(LOOK_FULL, LOOK_MID, ease);
+                    } else if (mode.includes('mid') || mode.includes('medium')) {
+                        targetPos = POS_MID;
+                        targetLook = LOOK_MID;
+                    } else {
+                        // Catches default, zoomout, wide, full
+                        targetPos = POS_FULL;
+                        targetLook = LOOK_FULL;
                     }
 
-                    if (mode.includes('shake')) {
-                        const shakeMag = Math.max(0, 0.02 * (1.0 - ((camAge || 0) / 0.7)));
-                        targetCamPos.x += (Math.random() - 0.5) * shakeMag;
-                        targetCamPos.y += (Math.random() - 0.5) * shakeMag;
+                    if (window.__lastMode !== mode) {
+                        window.__lastMode = mode;
+                        if (!isSlow) {
+                            cam.position.copy(targetPos);
+                            window.__camLook.copy(targetLook);
+                        }
                     }
 
-                    cam.position.lerp(targetCamPos, 0.07);
-                    window.__camLook.lerp(targetCamLook, 0.07);
+                    if (isSlow) {
+                        cam.position.copy(targetPos);
+                        window.__camLook.copy(targetLook);
+                    } else {
+                        cam.position.lerp(targetPos, 0.40);
+                        window.__camLook.lerp(targetLook, 0.40);
+                    }
+
                     cam.lookAt(window.__camLook);
                 }
 
-                const organicSway = (time, f1, f2, f3) => {
-                    return Math.sin(time * f1) * 0.55 + Math.sin(time * f2) * 0.32 + Math.sin(time * f3) * 0.13;
-                };
+                const breathCycle = Math.sin(t * 1.6);
+                const organicSway = (time, f1, f2) => Math.sin(time * f1) * 0.65 + Math.sin(time * f2) * 0.35;
 
-                const tHips = t;
-                const tSpine = t - 0.15;
-                const tHead = t - 0.35;
-
-                const hipSwayX = organicSway(tHips, 0.72, 1.35, 2.81) * 0.016;
-                const hipRollZ = organicSway(tHips, 0.68, 1.25, 2.50) * 0.024;
-                const breathCycle = Math.sin(t * 1.96);
-
+                // Contrapposto Stance
                 if (hips) {
-                    hips.position.x = 0.012 + hipSwayX;
-                    hips.rotation.z = -0.042 + hipRollZ;
-                    hips.rotation.y = organicSway(tHips, 0.45, 0.95, 1.7) * 0.018;
+                    hips.position.x = 0.018 + organicSway(t, 0.55, 1.1) * 0.005;
+                    hips.rotation.z = -0.050 + organicSway(t, 0.45, 0.95) * 0.006;
+                    hips.rotation.y = 0.035 + organicSway(t, 0.35, 0.75) * 0.005;
                 }
                 if (spine) {
-                    spine.rotation.x = breathCycle * 0.018 + organicSway(tSpine, 0.5, 1.1, 2.1) * 0.008;
-                    spine.rotation.z = 0.028 - hipRollZ * 0.65;
-                    spine.rotation.y = organicSway(tSpine, 0.4, 0.8, 1.6) * 0.012;
+                    spine.rotation.x = breathCycle * 0.012;
+                    spine.rotation.z = 0.038;
+                    spine.rotation.y = -0.025;
                 }
                 if (chest) {
-                    chest.rotation.x = breathCycle * 0.026;
-                    chest.rotation.y = -0.04 + organicSway(tSpine, 0.35, 0.75, 1.5) * 0.015;
+                    chest.rotation.x = 0.022 + breathCycle * 0.016;
+                    chest.rotation.y = -0.018;
+                    chest.rotation.z = -0.010;
                 }
 
-                if (rShoulder) rShoulder.rotation.set(0.04, 0.06, 0.08 + breathCycle * 0.01);
-                if (lShoulder) lShoulder.rotation.set(-0.02, 0.0, -0.03 - breathCycle * 0.008);
+                if (lUpLeg)  lUpLeg.rotation.set(-0.02, 0.0, -0.02);
+                if (lLowLeg) lLowLeg.rotation.set(0.02, 0.0, 0.0);
+                if (lFoot)   lFoot.rotation.set(0.0, 0.0, 0.02);
+
+                if (rUpLeg)  rUpLeg.rotation.set(0.06, 0.04, 0.05);
+                if (rLowLeg) rLowLeg.rotation.set(-0.10, 0.0, 0.0);
+                if (rFoot)   rFoot.rotation.set(0.04, 0.0, -0.04);
+
+                if (rShoulder) rShoulder.rotation.set(0.02, 0.04, 0.03 + breathCycle * 0.006);
+                if (lShoulder) lShoulder.rotation.set(-0.02, -0.02, -0.04 - breathCycle * 0.006);
 
                 const isSpeaking = phoneme && phoneme !== 'X';
-                const nod = isSpeaking ? (Math.sin(t * 3.8) * 0.024 + Math.sin(t * 7.2) * 0.01) : (Math.sin(t * 1.1) * 0.008);
+                const targetSpeechPitch = isSpeaking ? (Math.sin(t * 2.4) * 0.016 + Math.sin(t * 1.2) * 0.010) : (Math.sin(t * 0.9) * 0.005);
+                const targetSpeechYaw   = isSpeaking ? (Math.sin(t * 1.6) * 0.012) : 0;
 
-                const headRoll = -0.05 + organicSway(tHead, 0.52, 1.05, 2.2) * 0.018;
-                const headYaw = -0.07 + organicSway(tHead, 0.42, 0.88, 1.75) * 0.022;
-                const headPitch = -0.06 + nod + organicSway(tHead, 0.65, 1.3, 2.6) * 0.012;
+                smoothedSpeechPitch = lerp(smoothedSpeechPitch, targetSpeechPitch, 0.12);
+                smoothedSpeechYaw   = lerp(smoothedSpeechYaw, targetSpeechYaw, 0.08);
+
+                const headRoll = -0.030 + organicSway(t, 0.42, 0.85) * 0.010;
+                const headYaw  = -0.035 + smoothedSpeechYaw + organicSway(t, 0.35, 0.70) * 0.012;
+                const headPitch = -0.040 + smoothedSpeechPitch;
 
                 if (head) head.rotation.set(headPitch, headYaw, headRoll);
-                if (neck) neck.rotation.set(nod * 0.35 + headPitch * 0.25, headYaw * 0.25, headRoll * 0.25);
+                if (neck) neck.rotation.set(headPitch * 0.35, headYaw * 0.30, headRoll * 0.30);
 
                 if (t > nextSaccadeTime) {
-                    nextSaccadeTime = t + 1.8 + Math.random() * 2.0;
-                    saccadeTargetX = (Math.random() - 0.5) * 0.028;
-                    saccadeTargetY = (Math.random() - 0.5) * 0.018;
+                    nextSaccadeTime = t + 2.2 + Math.random() * 2.5;
+                    saccadeTargetX = (Math.random() - 0.5) * 0.022;
+                    saccadeTargetY = (Math.random() - 0.5) * 0.014;
                 }
-                saccadeCurrX = lerp(saccadeCurrX, saccadeTargetX, 0.10);
-                saccadeCurrY = lerp(saccadeCurrY, saccadeTargetY, 0.10);
+                saccadeCurrX = lerp(saccadeCurrX, saccadeTargetX, 0.08);
+                saccadeCurrY = lerp(saccadeCurrY, saccadeTargetY, 0.08);
 
                 const lEye = vrm.humanoid.getBoneNode('leftEye');
                 const rEye = vrm.humanoid.getBoneNode('rightEye');
@@ -511,7 +571,7 @@ const readJsonClean = (p) => {
                     rEye.rotation.set(saccadeCurrY, saccadeCurrX, 0);
                 }
 
-                // Pointing activation: smooth lerp to 1.0 during active overlay; smoothly resets to 0.0 on paragraph end
+                // Arm Kinematics: Confirmed Hands-on-Hips Placement
                 const hasOverlay = Boolean(activeOverlay);
                 const gest = (activeGesture || '').toLowerCase();
                 const isGestActive = gest && gestAge <= 2.5;
@@ -521,16 +581,15 @@ const readJsonClean = (p) => {
                 window.__pointingWeight = lerp(window.__pointingWeight, shouldPoint ? 1.0 : 0.0, 0.08);
                 const pw = window.__pointingWeight;
 
-                // Right Arm Kinematics: Hand-on-hip vs. Elevated Pointing to Top-Left Graphic Card
+                // 1. Right Arm: Rest firmly on right hip vs Pointing
                 if (rArm && rElbow) {
-                    const hipArmX = -0.28 + breathCycle * 0.008;
-                    const hipArmY = -0.15;
-                    const hipArmZ = -1.18;
+                    const hipArmX = -0.16 + breathCycle * 0.005;
+                    const hipArmY = -0.20;
+                    const hipArmZ = -1.24;
                     const hipElbX = -0.92;
-                    const hipElbY = 0.0;
-                    const hipElbZ = -0.05;
+                    const hipElbY =  0.35;
+                    const hipElbZ = -0.18;
 
-                    // Pointing elevated upward (+Z) aiming directly at top-left card
                     const pointArmX = 0.32;
                     const pointArmY = 0.38;
                     const pointArmZ = 0.28;
@@ -550,31 +609,32 @@ const readJsonClean = (p) => {
                     );
                     if (rHand) {
                         rHand.rotation.set(
-                            lerp(0.10, 0.0, pw),
-                            lerp(-0.15, 0.0, pw),
-                            lerp(-0.20, 0.0, pw)
+                            lerp(0.12, 0.0, pw),
+                            lerp(0.16, 0.0, pw),
+                            lerp(-0.24, 0.0, pw)
                         );
                     }
                 }
 
-                if (lArm) lArm.rotation.set(0.04 + breathCycle * 0.006, 0.0, 1.30);
-                if (lElbow) lElbow.rotation.set(0.08, 0.0, 0.0);
-                if (lHand) lHand.rotation.set(0.0, 0.0, 0.0);
+                // 2. Left Arm: Rest firmly on left hip
+                if (lArm)   lArm.rotation.set(-0.16 + breathCycle * 0.005, 0.20, 1.24);
+                if (lElbow) lElbow.rotation.set(-0.92, -0.35, 0.18);
+                if (lHand)  lHand.rotation.set(0.12, -0.16, 0.24);
 
                 poseFingersCorrect(true, false);
                 poseFingersCorrect(false, pw > 0.08);
 
                 if (isGestActive && gest.includes('nod') && head) {
-                    head.rotation.x += Math.sin(gestAge * 9.0) * 0.10;
+                    head.rotation.x += Math.sin(gestAge * 8.0) * 0.08;
                 } else if (isGestActive && (gest.includes('head shake') || gest.includes('shake')) && head) {
-                    head.rotation.y += Math.sin(gestAge * 8.0) * 0.14;
+                    head.rotation.y += Math.sin(gestAge * 7.0) * 0.12;
                 }
 
                 const blinkPeriod = 3.8;
                 const blinkMod = t % blinkPeriod;
                 let blinkVal = 0;
-                if (blinkMod < 0.08) blinkVal = blinkMod / 0.08;
-                else if (blinkMod < 0.24) blinkVal = 1.0 - ((blinkMod - 0.08) / 0.16);
+                if (blinkMod < 0.07) blinkVal = Math.sin((blinkMod / 0.07) * (Math.PI / 2));
+                else if (blinkMod < 0.22) blinkVal = Math.cos(((blinkMod - 0.07) / 0.15) * (Math.PI / 2));
                 if (vrm.blendShapeProxy) vrm.blendShapeProxy.setValue('blink', blinkVal);
 
                 const targetVowel = visemeMap[phoneme] || null;
@@ -609,7 +669,6 @@ const readJsonClean = (p) => {
 
                 vrm.update(1 / 30);
 
-                // HUD Overlay Display
                 const cleanKey = (activeOverlay || '').replace(/['"]/g, '').toLowerCase().trim();
                 const cleanBase = cleanKey.replace(/\.[^/.]+$/, "");
                 const targetTex = overlayTextures[cleanKey] || overlayTextures[cleanBase];
@@ -687,8 +746,8 @@ const readJsonClean = (p) => {
     </html>
     `;
 
-    await page.setContent(htmlContent);
-    await page.waitForFunction('window.__ready === true', { timeout: 60000 });
+    await page.setContent(htmlContent, { waitUntil: 'domcontentloaded', timeout: 120000 });
+    await page.waitForFunction('window.__ready === true', { timeout: 120000 });
 
     const ffmpeg = spawn('ffmpeg', [
         '-y',
@@ -734,9 +793,9 @@ const readJsonClean = (p) => {
 
             const activeExpr = timeline.filter(e => e.type === 'emotion' && e.time <= currentTime).pop()?.value || 'neutral';
 
-            const lastCamEv = timeline.filter(e => e.type === 'cam' && e.time <= currentTime).pop();
-            const activeCam = lastCamEv?.value || 'mid';
-            const camAge = lastCamEv ? (currentTime - lastCamEv.time) : 0;
+            const lastCamEv = timeline.filter(e => e.type === 'cam' && e.time <= (currentTime + 0.005)).pop();
+            const activeCam = lastCamEv ? lastCamEv.value : 'default';
+            const camAge = lastCamEv ? Math.max(0, currentTime - lastCamEv.time) : 0;
 
             const lastGestEv = timeline.filter(e => e.type === 'gesture' && e.time <= currentTime).pop();
             const activeGesture = lastGestEv?.value || '';
