@@ -104,7 +104,7 @@ namespace PodcastEngine.Api.Services
                 var showMatch = Regex.Match(para, @"\[Show:\s*[""']?([^""'\]\s]+)[""']?(?:\s+at\s+[a-zA-Z-]+)?\s*\]", RegexOptions.IgnoreCase);
                 if (showMatch.Success)
                 {
-                    seg.Show = showMatch.Groups[1].Value.Trim();
+                    seg.Show = showMatch.Groups[1].Value.Replace("\"", "").Replace("'", "").Trim();
                     seg.ShowPos = "top-left";
                 }
 
@@ -155,6 +155,7 @@ namespace PodcastEngine.Api.Services
             var sfxCues = new List<SfxCue>();
             var bgmCues = new List<BgmCue>();
             var orderedAudioFiles = new List<string>();
+            bool hasActiveOverlay = false;
 
             foreach (var seg in parsedSegments)
             {
@@ -177,17 +178,24 @@ namespace PodcastEngine.Api.Services
                     timeline.Add(new TimelineEvent { time = runningTime, type = "gesture", value = seg.Gesture });
                 if (!string.IsNullOrEmpty(seg.LowerThird))
                     timeline.Add(new TimelineEvent { time = runningTime, type = "lowerthird", value = seg.LowerThird });
+
+                // Overlay Lifecycle: Show when requested; dismiss automatically when paragraph starts without a [Show] tag
                 if (!string.IsNullOrEmpty(seg.Show))
+                {
                     timeline.Add(new TimelineEvent { time = runningTime, type = "show", value = seg.Show, position = seg.ShowPos });
-                if (seg.Hide)
+                    hasActiveOverlay = true;
+                }
+                else if (seg.Hide || hasActiveOverlay)
+                {
                     timeline.Add(new TimelineEvent { time = runningTime, type = "hide", value = "" });
+                    hasActiveOverlay = false;
+                }
 
                 if (!string.IsNullOrEmpty(seg.Sfx))
                 {
                     string resolved = ResolveSfxFile(seg.Sfx);
                     if (File.Exists(resolved))
                     {
-                        // Enforce max 3-second ceiling with 0.5s audio fade-out
                         string clampedSfx = Path.Combine(sessionDir, $"sfx_{seg.Index}.wav");
                         ClampSfxAudio(resolved, clampedSfx, 3.0);
                         string finalSfx = File.Exists(clampedSfx) ? clampedSfx : resolved;

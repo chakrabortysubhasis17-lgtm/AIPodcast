@@ -64,19 +64,29 @@ const readJsonClean = (p) => {
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
     const serverPort = server.address().port;
 
-    const overlaysDir = path.join(sessionDir, 'overlays');
     const overlayMap = {};
-    if (fs.existsSync(overlaysDir)) {
-        const files = fs.readdirSync(overlaysDir);
-        for (const file of files) {
-            const fPath = path.join(overlaysDir, file);
-            if (fs.statSync(fPath).isFile()) {
-                const ext = path.extname(file).toLowerCase();
-                const mime = ext === '.png' ? 'image/png' : 'image/jpeg';
-                overlayMap[file.toLowerCase()] = "data:" + mime + ";base64," + fs.readFileSync(fPath).toString('base64');
+    const readDirToMap = (dir) => {
+        if (fs.existsSync(dir)) {
+            const files = fs.readdirSync(dir);
+            for (const file of files) {
+                const fPath = path.join(dir, file);
+                if (fs.statSync(fPath).isFile()) {
+                    const ext = path.extname(file).toLowerCase();
+                    if (['.png', '.jpg', '.jpeg', '.webp'].includes(ext)) {
+                        const mime = ext === '.png' ? 'image/png' : (ext === '.webp' ? 'image/webp' : 'image/jpeg');
+                        const dataUri = "data:" + mime + ";base64," + fs.readFileSync(fPath).toString('base64');
+                        const key = file.toLowerCase().trim();
+                        overlayMap[key] = dataUri;
+                        overlayMap[key.replace(/\.[^/.]+$/, "")] = dataUri;
+                    }
+                }
             }
         }
-    }
+    };
+
+    // Scan both sessionDir root and overlays/ folder
+    readDirToMap(path.join(sessionDir, 'overlays'));
+    readDirToMap(sessionDir);
 
     const browser = await puppeteer.launch({
         headless: "new",
@@ -177,6 +187,8 @@ const readJsonClean = (p) => {
             function setupOrthographicHUD() {
                 hudScene = new THREE.Scene();
                 hudCamera = new THREE.OrthographicCamera(0, 1920, 1080, 0, -10, 10);
+                hudCamera.position.set(0, 0, 5);
+                hudCamera.lookAt(0, 0, 0);
 
                 ltCanvas = document.createElement('canvas');
                 ltCanvas.width = 960;
@@ -185,16 +197,18 @@ const readJsonClean = (p) => {
                 ltTexture = new THREE.CanvasTexture(ltCanvas);
 
                 const geo = new THREE.PlaneGeometry(960, 160);
-                ltMat = new THREE.MeshBasicMaterial({ map: ltTexture, transparent: true, opacity: 0 });
+                ltMat = new THREE.MeshBasicMaterial({ map: ltTexture, transparent: true, opacity: 0, depthTest: false, depthWrite: false });
                 lowerThirdMesh = new THREE.Mesh(geo, ltMat);
                 lowerThirdMesh.position.set(70 + (960 / 2), 70 + (160 / 2), 1);
+                lowerThirdMesh.renderOrder = 100;
                 hudScene.add(lowerThirdMesh);
 
                 const overlayInitGeo = new THREE.PlaneGeometry(540, 540);
-                overlayMat = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0 });
+                overlayMat = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthTest: false, depthWrite: false });
                 overlayMesh = new THREE.Mesh(overlayInitGeo, overlayMat);
-                const initialMargin = 60;
-                overlayMesh.position.set(initialMargin + (540 / 2), (1080 - initialMargin) - (540 / 2), 2);
+                const margin = 70;
+                overlayMesh.position.set(margin + (540 / 2), (1080 - margin) - (540 / 2), 1);
+                overlayMesh.renderOrder = 90;
                 hudScene.add(overlayMesh);
             }
 
@@ -290,10 +304,25 @@ const readJsonClean = (p) => {
                 fillRim.position.set(1.5, 1.2, -0.8).normalize();
                 scene.add(fillRim);
 
-                const textureLoader = new THREE.TextureLoader();
+                // Pre-decode overlay images into Three.js textures
                 const rawMap = ${JSON.stringify(overlayMap)};
                 for (const [key, dataUrl] of Object.entries(rawMap)) {
-                    overlayTextures[key] = textureLoader.load(dataUrl);
+                    await new Promise((resolve) => {
+                        const img = new Image();
+                        img.onload = () => {
+                            const tex = new THREE.Texture(img);
+                            tex.needsUpdate = true;
+                            const clean = key.toLowerCase().trim();
+                            overlayTextures[clean] = tex;
+                            overlayTextures[clean.replace(/\.[^/.]+$/, "")] = tex;
+                            resolve();
+                        };
+                        img.onerror = () => {
+                            console.warn("Failed to decode overlay image:", key);
+                            resolve();
+                        };
+                        img.src = dataUrl;
+                    });
                 }
 
                 const gltfLoader = new THREE.GLTFLoader();
@@ -302,7 +331,6 @@ const readJsonClean = (p) => {
                         vrm = loadedVrm;
                         scene.add(vrm.scene);
 
-                        // Halved angle: precisely 5.7° (0.10 rad) from perpendicular
                         vrm.scene.rotation.y = Math.PI - 0.10;
                         vrm.scene.position.set(0, 0, 0);
 
@@ -320,6 +348,7 @@ const readJsonClean = (p) => {
                 }, undefined, (err) => console.error("GLTF download error:", err));
             }
 
+            // Anatomical finger posing: negative Z curls inward into the palm
             function poseFingersCorrect(isLeft, isPointing) {
                 const side = isLeft ? 'left' : 'right';
 
@@ -345,11 +374,12 @@ const readJsonClean = (p) => {
                     if (ti) ti.rotation.set(0, 0, -0.12);
                     if (td) td.rotation.set(0, 0, -0.08);
                 } else {
+                    // Right Hand: Resting on hip vs. Pointing with index finger
                     const configs = [
-                        { name: 'Index',  ySpread:  0.04, pZ: isPointing ? 0.04 : 0.26, iZ: isPointing ? 0.02 : 0.32, dZ: isPointing ? 0.00 : 0.20 },
-                        { name: 'Middle', ySpread:  0.00, pZ: isPointing ? 0.75 : 0.36, iZ: isPointing ? 0.85 : 0.40, dZ: isPointing ? 0.55 : 0.24 },
-                        { name: 'Ring',   ySpread: -0.05, pZ: isPointing ? 0.82 : 0.44, iZ: isPointing ? 0.90 : 0.48, dZ: isPointing ? 0.60 : 0.28 },
-                        { name: 'Little', ySpread: -0.10, pZ: isPointing ? 0.88 : 0.52, iZ: isPointing ? 0.95 : 0.56, dZ: isPointing ? 0.65 : 0.34 }
+                        { name: 'Index',  ySpread:  0.02, pZ: isPointing ? 0.00 : -0.26,  iZ: isPointing ? 0.00 : -0.32,  dZ: isPointing ? 0.00 : -0.20 },
+                        { name: 'Middle', ySpread:  0.00, pZ: isPointing ? -0.70 : -0.36, iZ: isPointing ? -0.85 : -0.40, dZ: isPointing ? -0.55 : -0.24 },
+                        { name: 'Ring',   ySpread: -0.05, pZ: isPointing ? -0.75 : -0.44, iZ: isPointing ? -0.90 : -0.48, dZ: isPointing ? -0.60 : -0.28 },
+                        { name: 'Little', ySpread: -0.10, pZ: isPointing ? -0.80 : -0.52, iZ: isPointing ? -0.95 : -0.56, dZ: isPointing ? -0.65 : -0.34 }
                     ];
                     configs.forEach(c => {
                         const p = vrm.humanoid.getBoneNode(side + c.name + 'Proximal');
@@ -362,9 +392,9 @@ const readJsonClean = (p) => {
                     const tp = vrm.humanoid.getBoneNode(side + 'ThumbProximal');
                     const ti = vrm.humanoid.getBoneNode(side + 'ThumbIntermediate');
                     const td = vrm.humanoid.getBoneNode(side + 'ThumbDistal');
-                    if (tp) tp.rotation.set(-0.10, 0.18, isPointing ? 0.35 : 0.18);
-                    if (ti) ti.rotation.set(0, 0, isPointing ? 0.25 : 0.14);
-                    if (td) td.rotation.set(0, 0, isPointing ? 0.18 : 0.10);
+                    if (tp) tp.rotation.set(-0.12, 0.18, isPointing ? -0.25 : -0.18);
+                    if (ti) ti.rotation.set(0, 0, isPointing ? -0.20 : -0.14);
+                    if (td) td.rotation.set(0, 0, isPointing ? -0.15 : -0.10);
                 }
             }
 
@@ -450,7 +480,6 @@ const readJsonClean = (p) => {
                 }
                 if (chest) {
                     chest.rotation.x = breathCycle * 0.026;
-                    // Halved chest inward rotation
                     chest.rotation.y = -0.04 + organicSway(tSpine, 0.35, 0.75, 1.5) * 0.015;
                 }
 
@@ -460,7 +489,6 @@ const readJsonClean = (p) => {
                 const isSpeaking = phoneme && phoneme !== 'X';
                 const nod = isSpeaking ? (Math.sin(t * 3.8) * 0.024 + Math.sin(t * 7.2) * 0.01) : (Math.sin(t * 1.1) * 0.008);
 
-                // Halved head yaw (-0.07 rad) maintains direct eye line with audience
                 const headRoll = -0.05 + organicSway(tHead, 0.52, 1.05, 2.2) * 0.018;
                 const headYaw = -0.07 + organicSway(tHead, 0.42, 0.88, 1.75) * 0.022;
                 const headPitch = -0.06 + nod + organicSway(tHead, 0.65, 1.3, 2.6) * 0.012;
@@ -483,6 +511,7 @@ const readJsonClean = (p) => {
                     rEye.rotation.set(saccadeCurrY, saccadeCurrX, 0);
                 }
 
+                // Pointing activation: smooth lerp to 1.0 during active overlay; smoothly resets to 0.0 on paragraph end
                 const hasOverlay = Boolean(activeOverlay);
                 const gest = (activeGesture || '').toLowerCase();
                 const isGestActive = gest && gestAge <= 2.5;
@@ -492,6 +521,7 @@ const readJsonClean = (p) => {
                 window.__pointingWeight = lerp(window.__pointingWeight, shouldPoint ? 1.0 : 0.0, 0.08);
                 const pw = window.__pointingWeight;
 
+                // Right Arm Kinematics: Hand-on-hip vs. Elevated Pointing to Top-Left Graphic Card
                 if (rArm && rElbow) {
                     const hipArmX = -0.28 + breathCycle * 0.008;
                     const hipArmY = -0.15;
@@ -500,10 +530,11 @@ const readJsonClean = (p) => {
                     const hipElbY = 0.0;
                     const hipElbZ = -0.05;
 
-                    const pointArmX = 0.45;
-                    const pointArmY = 0.42;
-                    const pointArmZ = -0.65;
-                    const pointElbX = -0.32;
+                    // Pointing elevated upward (+Z) aiming directly at top-left card
+                    const pointArmX = 0.32;
+                    const pointArmY = 0.38;
+                    const pointArmZ = 0.28;
+                    const pointElbX = -0.10;
                     const pointElbY = 0.0;
                     const pointElbZ = 0.0;
 
@@ -521,7 +552,7 @@ const readJsonClean = (p) => {
                         rHand.rotation.set(
                             lerp(0.10, 0.0, pw),
                             lerp(-0.15, 0.0, pw),
-                            lerp(-0.20, -0.12, pw)
+                            lerp(-0.20, 0.0, pw)
                         );
                     }
                 }
@@ -531,7 +562,7 @@ const readJsonClean = (p) => {
                 if (lHand) lHand.rotation.set(0.0, 0.0, 0.0);
 
                 poseFingersCorrect(true, false);
-                poseFingersCorrect(false, pw > 0.05);
+                poseFingersCorrect(false, pw > 0.08);
 
                 if (isGestActive && gest.includes('nod') && head) {
                     head.rotation.x += Math.sin(gestAge * 9.0) * 0.10;
@@ -578,14 +609,18 @@ const readJsonClean = (p) => {
 
                 vrm.update(1 / 30);
 
-                if (activeOverlay && overlayTextures[activeOverlay.toLowerCase()]) {
-                    const tex = overlayTextures[activeOverlay.toLowerCase()];
-                    if (overlayMat.map !== tex) {
-                        overlayMat.map = tex;
+                // HUD Overlay Display
+                const cleanKey = (activeOverlay || '').replace(/['"]/g, '').toLowerCase().trim();
+                const cleanBase = cleanKey.replace(/\.[^/.]+$/, "");
+                const targetTex = overlayTextures[cleanKey] || overlayTextures[cleanBase];
+
+                if (activeOverlay && targetTex) {
+                    if (overlayMat.map !== targetTex) {
+                        overlayMat.map = targetTex;
                         overlayMat.needsUpdate = true;
                     }
 
-                    const img = tex.image;
+                    const img = targetTex.image;
                     if (img && img.width > 0 && img.height > 0) {
                         const targetW = 540;
                         const aspect = img.height / img.width;
@@ -594,8 +629,8 @@ const readJsonClean = (p) => {
                         if (overlayMesh.userData.currentH !== targetH) {
                             overlayMesh.geometry.dispose();
                             overlayMesh.geometry = new THREE.PlaneGeometry(targetW, targetH);
-                            const margin = 60;
-                            overlayMesh.position.set(margin + (targetW / 2), (1080 - margin) - (targetH / 2), 2);
+                            const margin = 70;
+                            overlayMesh.position.set(margin + (targetW / 2), (1080 - margin) - (targetH / 2), 1);
                             overlayMesh.userData.currentH = targetH;
                         }
                     }
@@ -627,6 +662,7 @@ const readJsonClean = (p) => {
 
                 renderer.clear();
                 renderer.render(scene, camera);
+                renderer.clearDepth();
                 renderer.render(hudScene, hudCamera);
 
                 return window.__canvas.toDataURL('image/jpeg', 0.85);

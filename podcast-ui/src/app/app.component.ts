@@ -23,13 +23,10 @@ import { AssetInspectorManager } from './components/asset-inspector';
 
       <!-- Syntax Highlighting Overlay Container -->
       <div style="position: relative; width: 100%; height: 210px; border-radius: 8px; overflow: hidden; border: 1px solid #334155; background: #0f172a;">
-
-        <!-- Backdrop Mirror for Syntax Highlighting -->
         <div #backdrop style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; padding: 14px; font-family: Consolas, monospace; font-size: 14px; line-height: 1.6; white-space: pre-wrap; word-wrap: break-word; pointer-events: none; color: #f1f5f9; overflow-y: auto; box-sizing: border-box;"
              [innerHTML]="highlightedContent">
         </div>
 
-        <!-- Foreground Editable Textarea -->
         <textarea
           [(ngModel)]="scriptText"
           (ngModelChange)="updateHighlight()"
@@ -67,7 +64,7 @@ import { AssetInspectorManager } from './components/asset-inspector';
             </div>
 
             <div style="display: flex; align-items: center; gap: 12px;">
-              <input type="file" accept="image/*" (change)="inspector.onFileSelected(asset, $event)" #fileInput style="display: none;" />
+              <input type="file" accept="image/*" (change)="onFileAttached(asset, $event)" #fileInput style="display: none;" />
               <button type="button" (click)="fileInput.click()" style="background: #0284c7; color: white; border: none; padding: 6px 14px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer;">
                 {{ asset.isAttached ? 'Replace' : 'Browse File' }}
               </button>
@@ -116,8 +113,6 @@ import { AssetInspectorManager } from './components/asset-inspector';
 
       <!-- Stepper & Dual Progress Dashboard -->
       <div *ngIf="isLoading || progressPercent > 0 || errorMessage" style="margin-top: 24px; padding: 22px; background: #0f172a; border: 1px solid #38bdf8; border-radius: 10px;">
-
-        <!-- Synchronized 4-Stage Stepper -->
         <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 20px;">
           <div [style.background]="getStageBg(1)" [style.border]="getStageBorder(1)" [style.color]="getStageColor(1)" style="padding: 10px 8px; border-radius: 6px; text-align: center; font-size: 12px; font-weight: 600; transition: all 0.3s;">
             <span *ngIf="currentStage > 1">✓ </span>1. Voice Synthesis
@@ -136,7 +131,6 @@ import { AssetInspectorManager } from './components/asset-inspector';
           </div>
         </div>
 
-        <!-- 1. OVERALL PROGRESS BAR -->
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
           <div style="display: flex; align-items: center; gap: 10px;">
             <div *ngIf="isLoading" class="spinner"></div>
@@ -158,7 +152,6 @@ import { AssetInspectorManager } from './components/asset-inspector';
           </div>
         </div>
 
-        <!-- 2. STEP PROGRESS BAR WITH ESTIMATED TIME LEFT -->
         <div *ngIf="isLoading && progressPercent < 100" style="background: rgba(15, 23, 42, 0.7); border: 1px solid #1e293b; border-radius: 8px; padding: 12px; margin-bottom: 12px;">
           <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
             <div style="display: flex; align-items: center; gap: 8px;">
@@ -232,6 +225,7 @@ export class AppComponent implements OnDestroy {
   @ViewChild('logContainer') private logContainer!: ElementRef;
 
   public inspector = new AssetInspectorManager();
+  private attachedFilesMap = new Map<string, File>();
 
   selectedAvatar: string = 'mina';
 
@@ -270,23 +264,32 @@ Hey guys, welcome back to the podcast!
     this.updateHighlight();
   }
 
+  onFileAttached(asset: any, event: Event) {
+    const input = event.target as HTMLInputElement;
+    if (input.files && input.files.length > 0) {
+      const file = input.files[0];
+      asset.file = file;
+      asset.isAttached = true;
+      asset.errorMessage = null;
+      asset.previewUrl = URL.createObjectURL(file);
+      this.attachedFilesMap.set(asset.filename.toLowerCase().trim(), file);
+    }
+    if (this.inspector && this.inspector.onFileSelected) {
+      this.inspector.onFileSelected(asset, event);
+    }
+  }
+
   formatDuration(totalSec: number): string {
     if (!totalSec || totalSec <= 0) return '0s';
     const sec = Math.floor(totalSec);
-    if (sec < 60) {
-      return `${sec}s`;
-    }
+    if (sec < 60) return `${sec}s`;
 
     const hours = Math.floor(sec / 3600);
     const minutes = Math.floor((sec % 3600) / 60);
     const seconds = sec % 60;
     const pad = (n: number) => n.toString().padStart(2, '0');
 
-    if (hours > 0) {
-      return `${pad(hours)}h ${pad(minutes)}m ${pad(seconds)}s`;
-    } else {
-      return `${minutes}m ${pad(seconds)}s`;
-    }
+    return hours > 0 ? `${pad(hours)}h ${pad(minutes)}m ${pad(seconds)}s` : `${minutes}m ${pad(seconds)}s`;
   }
 
   getStageTitle(stageNum: number): string {
@@ -312,9 +315,7 @@ Hey guys, welcome back to the podcast!
 
   syncScroll(event: Event) {
     const target = event.target as HTMLElement;
-    if (this.backdrop) {
-      this.backdrop.nativeElement.scrollTop = target.scrollTop;
-    }
+    if (this.backdrop) this.backdrop.nativeElement.scrollTop = target.scrollTop;
   }
 
   getStageBg(stageNum: number): string {
@@ -335,14 +336,8 @@ Hey guys, welcome back to the podcast!
   }
 
   private calculateStepEta(progress: number) {
-    if (progress <= 1) {
-      this.stepEtaText = 'Estimating...';
-      return;
-    }
-    if (progress >= 100) {
-      this.stepEtaText = 'Completed';
-      return;
-    }
+    if (progress <= 1) { this.stepEtaText = 'Estimating...'; return; }
+    if (progress >= 100) { this.stepEtaText = 'Completed'; return; }
 
     const elapsedMs = Date.now() - this.stageStartTime;
     const estimatedTotalMs = (elapsedMs / progress) * 100;
@@ -375,7 +370,26 @@ Hey guys, welcome back to the podcast!
     const payload = new FormData();
     payload.append('script', this.scriptText);
     payload.append('avatar', this.selectedAvatar);
-    this.inspector.appendToFormData(payload);
+
+    // Multi-key append: ensures files arrive whether server looks for 'files' or the target name
+    this.attachedFilesMap.forEach((file, name) => {
+      payload.append('files', file, name);
+      payload.append(name, file, name);
+    });
+
+    if (this.inspector && this.inspector.requiredAssets) {
+      for (const asset of this.inspector.requiredAssets) {
+        const fileObj = (asset as any).file || (asset as any).rawFile;
+        if (fileObj instanceof File && !this.attachedFilesMap.has(asset.filename.toLowerCase().trim())) {
+          payload.append('files', fileObj, asset.filename);
+          payload.append(asset.filename, fileObj, asset.filename);
+        }
+      }
+    }
+
+    if (this.inspector && this.inspector.appendToFormData) {
+      this.inspector.appendToFormData(payload);
+    }
 
     this.http.post<{ jobId: string }>('http://localhost:5000/api/video/start-job', payload)
       .subscribe({
@@ -435,9 +449,7 @@ Hey guys, welcome back to the podcast!
         }
 
         const msg = data.message ?? data.stageMessage;
-        if (msg) {
-          this.currentStepText = msg;
-        }
+        if (msg) this.currentStepText = msg;
 
         const logMsg = data.message ?? data.log;
         if (logMsg) {
@@ -457,8 +469,7 @@ Hey guys, welcome back to the podcast!
           }, 10);
         }
 
-        const isFinished = data.status === 'completed' || 
-                           (msg && msg.includes('Render Complete'));
+        const isFinished = data.status === 'completed' || (msg && msg.includes('Render Complete'));
 
         if (data.downloadUrl) {
           this.isCompleted = true;
