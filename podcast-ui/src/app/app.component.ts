@@ -1,4 +1,4 @@
-﻿import { Component, OnDestroy, ChangeDetectorRef, ElementRef, ViewChild } from '@angular/core';
+import { Component, OnDestroy, ChangeDetectorRef, ElementRef, ViewChild } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { HttpClient } from '@angular/common/http';
@@ -82,8 +82,12 @@ import { AssetInspectorManager } from './components/asset-inspector';
         </div>
         <div style="display: flex; gap: 20px; align-items: center;">
           <label style="display: flex; align-items: center; gap: 6px; cursor: pointer; color: #f8fafc; font-size: 14px; font-weight: 500;">
+            <input type="radio" name="avatarChoice" value="shubo" [(ngModel)]="selectedAvatar" style="accent-color: #38bdf8; cursor: pointer;">
+            Shubo <span style="font-size: 11px; color: #38bdf8; background: rgba(56, 189, 248, 0.15); padding: 1px 6px; border-radius: 4px; border: 1px solid rgba(56, 189, 248, 0.3);">Default (Male)</span>
+          </label>
+          <label style="display: flex; align-items: center; gap: 6px; cursor: pointer; color: #f8fafc; font-size: 14px; font-weight: 500;">
             <input type="radio" name="avatarChoice" value="mina" [(ngModel)]="selectedAvatar" style="accent-color: #38bdf8; cursor: pointer;">
-            Mina <span style="font-size: 11px; color: #38bdf8; background: rgba(56, 189, 248, 0.15); padding: 1px 6px; border-radius: 4px; border: 1px solid rgba(56, 189, 248, 0.3);">Default</span>
+            Mina
           </label>
           <label style="display: flex; align-items: center; gap: 6px; cursor: pointer; color: #f8fafc; font-size: 14px; font-weight: 500;">
             <input type="radio" name="avatarChoice" value="tina" [(ngModel)]="selectedAvatar" style="accent-color: #38bdf8; cursor: pointer;">
@@ -176,7 +180,7 @@ import { AssetInspectorManager } from './components/asset-inspector';
         </div>
 
         <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 10px; font-size: 12px; color: #94a3b8;">
-          <span>Pipeline: Google TTS ➔ Rhubarb Visemes ➔ D3D11 Canvas Pipe ➔ FFmpeg</span>
+          <span>Pipeline: Edge TTS ➔ Rhubarb Visemes ➔ D3D11 Canvas Pipe ➔ FFmpeg</span>
           <span>Elapsed: {{ formatDuration(elapsedSeconds) }}</span>
         </div>
       </div>
@@ -227,7 +231,7 @@ export class AppComponent implements OnDestroy {
   public inspector = new AssetInspectorManager();
   private attachedFilesMap = new Map<string, File>();
 
-  selectedAvatar: string = 'mina';
+  selectedAvatar: string = 'shubo';
 
   scriptText: string = `[LowerThird: "Welcome to beingabong"] [SFX: Whoosh]
 [Cam: Mid] [Emotion: Joy]
@@ -371,7 +375,6 @@ Hey guys, welcome back to the podcast!
     payload.append('script', this.scriptText);
     payload.append('avatar', this.selectedAvatar);
 
-    // Multi-key append: ensures files arrive whether server looks for 'files' or the target name
     this.attachedFilesMap.forEach((file, name) => {
       payload.append('files', file, name);
       payload.append(name, file, name);

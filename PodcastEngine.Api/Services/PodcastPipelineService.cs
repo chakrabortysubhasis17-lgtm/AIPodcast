@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -72,7 +72,6 @@ namespace PodcastEngine.Api.Services
 
             _progress.Report(jobId, 1, 0, 0, "[TTS] Parsing script segments and scheduling parallel synthesis...");
 
-            // Split on blank lines OR whenever a directive block begins after speech
             var lines = script.Split(new[] { "\r\n", "\n" }, StringSplitOptions.None);
             var rawParagraphsList = new List<string>();
             var currentBlock = new StringBuilder();
@@ -171,7 +170,7 @@ namespace PodcastEngine.Api.Services
                 try
                 {
                     string segmentWav = Path.Combine(sessionDir, $"speech_{seg.Index}.wav");
-                    await SynthesizeSegmentSpeechAsync(seg.SpeechText, segmentWav, ct);
+                    await SynthesizeSegmentSpeechAsync(seg.SpeechText, segmentWav, avatar, ct);
                     seg.WavPath = segmentWav;
                     seg.Duration = GetWavDurationSeconds(segmentWav);
 
@@ -264,30 +263,41 @@ namespace PodcastEngine.Api.Services
             await ConcatWavsAsync(orderedAudioFiles, rawSpeechWav, ct);
             _progress.Report(jobId, 1, 100, 25, $"[TTS] Master speech track assembled. Total length: {runningTime:F1}s");
 
-            _progress.Report(jobId, 2, 0, 25, "[Rhubarb] Generating phonemes aligned to speech master...");
             string phonemesJsonPath = Path.Combine(sessionDir, "phonemes.json");
-
-            await GeneratePhonemesAsync(rawSpeechWav, phonemesJsonPath, jobId, ct);
-
-            int mouthCuesCount = 0;
-            if (File.Exists(phonemesJsonPath))
-            {
-                using var doc = JsonDocument.Parse(await File.ReadAllTextAsync(phonemesJsonPath, ct));
-                if (doc.RootElement.TryGetProperty("mouthCues", out var cues))
-                    mouthCuesCount = cues.GetArrayLength();
-            }
-            _progress.Report(jobId, 2, 100, 50, $"[Rhubarb] Generated {mouthCuesCount} lip-sync cues.");
-
             string timelinePath = Path.Combine(sessionDir, "timeline.json");
-            await File.WriteAllTextAsync(timelinePath, JsonSerializer.Serialize(timeline, new JsonSerializerOptions { WriteIndented = true }), new UTF8Encoding(false), ct);
-
-            _progress.Report(jobId, 3, 0, 50, "[FFmpeg] Building dynamic soundtrack and sidechain ducking...");
             string bgmMasterWav = Path.Combine(sessionDir, "bgm_composed.wav");
-            await BuildCompositeBgmTrackAsync(bgmCues, runningTime, bgmMasterWav, ct);
-
             string masterMixWav = Path.Combine(sessionDir, "master_mix.wav");
-            await ApplySidechainDuckingAndSfxAsync(rawSpeechWav, bgmMasterWav, sfxCues, masterMixWav, jobId, ct);
-            _progress.Report(jobId, 3, 100, 70, "[FFmpeg] Sidechain ducking applied. Master mix ready.");
+
+            // Write timeline while starting parallel tasks
+            var timelineTask = File.WriteAllTextAsync(timelinePath, JsonSerializer.Serialize(timeline, new JsonSerializerOptions { WriteIndented = true }), new UTF8Encoding(false), ct);
+
+            // Branch 1: Rhubarb Phoneme Extraction
+            var rhubarbTask = Task.Run(async () =>
+            {
+                _progress.Report(jobId, 2, 0, 25, "[Rhubarb] Generating phonemes aligned to speech master...");
+                await GeneratePhonemesAsync(rawSpeechWav, phonemesJsonPath, jobId, ct);
+
+                int mouthCuesCount = 0;
+                if (File.Exists(phonemesJsonPath))
+                {
+                    using var doc = JsonDocument.Parse(await File.ReadAllTextAsync(phonemesJsonPath, ct));
+                    if (doc.RootElement.TryGetProperty("mouthCues", out var cues))
+                        mouthCuesCount = cues.GetArrayLength();
+                }
+                _progress.Report(jobId, 2, 100, 50, $"[Rhubarb] Generated {mouthCuesCount} lip-sync cues.");
+            }, ct);
+
+            // Branch 2: BGM Assembly and Sidechain Ducking
+            var audioMasterTask = Task.Run(async () =>
+            {
+                _progress.Report(jobId, 3, 0, 50, "[FFmpeg] Building dynamic soundtrack and sidechain ducking...");
+                await BuildCompositeBgmTrackAsync(bgmCues, runningTime, bgmMasterWav, ct);
+                await ApplySidechainDuckingAndSfxAsync(rawSpeechWav, bgmMasterWav, sfxCues, masterMixWav, jobId, ct);
+                _progress.Report(jobId, 3, 100, 70, "[FFmpeg] Sidechain ducking applied. Master mix ready.");
+            }, ct);
+
+            // Wait for all pre-render audio pipelines to complete concurrently
+            await Task.WhenAll(timelineTask, rhubarbTask, audioMasterTask);
 
             _progress.Report(jobId, 4, 0, 70, $"[Three.js] Initializing Headless Chromium WebGL context for avatar: {avatar}...");
             string outputMp4 = Path.Combine(sessionDir, "podcast.mp4");
@@ -382,7 +392,7 @@ namespace PodcastEngine.Api.Services
                 throw new InvalidOperationException($"FFmpeg concat failed (Exit {p.ExitCode}): {err}");
         }
 
-        private async Task SynthesizeSegmentSpeechAsync(string text, string outputPath, CancellationToken ct)
+        private async Task SynthesizeSegmentSpeechAsync(string text, string outputPath, string avatar, CancellationToken ct)
         {
             text = Regex.Replace(text, @"(?<=[\d\u09E6-\u09EF])\s*[-\u2013\u2014]\s*(?=[\d\u09E6-\u09EF])", " ");
             text = Regex.Replace(text, @"(?<=[০-৯])\s*[-–—]\s*(?=[০-৯])", " ");
@@ -392,7 +402,7 @@ namespace PodcastEngine.Api.Services
             var psi = new ProcessStartInfo
             {
                 FileName = "node",
-                Arguments = $"synthesize_speech.js \"{txtFile}\" \"{outputPath}\"",
+                Arguments = $"synthesize_speech.js \"{txtFile}\" \"{outputPath}\" \"{avatar}\"",
                 WorkingDirectory = PathHelper.AvatarRendererBase,
                 CreateNoWindow = true,
                 UseShellExecute = false,

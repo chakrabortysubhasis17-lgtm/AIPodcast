@@ -3,7 +3,10 @@
   "version": "1.0.0",
   "type": "module",
   "dependencies": {
+    "@pixiv/three-vrm": "^3.3.0",
+    "@pixiv/three-vrm-animation": "^3.3.0",
     "msedge-tts": "^2.0.7",
-    "puppeteer": "^24.0.0"
+    "puppeteer": "^24.0.0",
+    "three": "^0.169.0"
   }
 }
