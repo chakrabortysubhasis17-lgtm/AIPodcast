@@ -526,4 +526,13 @@ Hey guys, welcome back to the podcast!
   ngOnDestroy() {
     this.finishProcess();
   }
+
+  getToneBadgeClass(directive: string): string {
+    const d = (directive || '').toLowerCase();
+    if (d.includes('friendly')) return 'bg-sky-100 text-sky-800 border-sky-300';
+    if (d.includes('formal')) return 'bg-slate-100 text-slate-800 border-slate-300';
+    if (d.includes('informal')) return 'bg-amber-100 text-amber-800 border-amber-300';
+    if (d.includes('authoritative')) return 'bg-rose-100 text-rose-800 border-rose-300';
+    return 'bg-gray-100 text-gray-700 border-gray-200';
+  }
 }

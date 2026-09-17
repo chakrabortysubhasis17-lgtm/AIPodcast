@@ -5,6 +5,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Net.Http;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -34,6 +35,13 @@ namespace PodcastEngine.Api.Services
         public string FilePath { get; set; } = string.Empty;
     }
 
+    public class MouthCueItem
+    {
+        public double start { get; set; }
+        public double end { get; set; }
+        public string value { get; set; } = string.Empty;
+    }
+
     internal class ScriptSegment
     {
         public int Index { get; set; }
@@ -50,6 +58,8 @@ namespace PodcastEngine.Api.Services
         public string SpeechText { get; set; } = string.Empty;
         public string WavPath { get; set; } = string.Empty;
         public double Duration { get; set; }
+        public string Tone { get; set; } = "neutral";
+        public List<MouthCueItem> MouthCues { get; set; } = new();
     }
 
     public class PodcastPipelineService
@@ -57,6 +67,11 @@ namespace PodcastEngine.Api.Services
         private readonly JobProgressService _progress;
         private readonly string _storageBase;
         private readonly string _assetsBase;
+
+        private static readonly HttpClient _httpClient = new HttpClient { Timeout = TimeSpan.FromMinutes(10) };
+        private static Process? _daemonProcess;
+        private static readonly SemaphoreSlim _daemonLock = new SemaphoreSlim(1, 1);
+        private const int DaemonPort = 5055;
 
         public PodcastPipelineService(JobProgressService progress)
         {
@@ -164,20 +179,41 @@ namespace PodcastEngine.Api.Services
             var throttler = new SemaphoreSlim(4);
             int completedTts = 0;
 
+            // Pipeline: Parallel TTS + Immediate Parallel Segment Rhubarb Lip-Sync
             var ttsTasks = speechItems.Select(async seg =>
             {
                 await throttler.WaitAsync(ct);
                 try
                 {
                     string segmentWav = Path.Combine(sessionDir, $"speech_{seg.Index}.wav");
-                    await SynthesizeSegmentSpeechAsync(seg.SpeechText, segmentWav, avatar, ct);
+                    await SynthesizeSegmentSpeechAsync(seg.SpeechText, segmentWav, avatar, seg.Tone, ct);
                     seg.WavPath = segmentWav;
                     seg.Duration = GetWavDurationSeconds(segmentWav);
 
                     int c = Interlocked.Increment(ref completedTts);
                     int stepPct = (int)(((double)c / speechItems.Count) * 100);
-                    int overallPct = (int)(((double)c / speechItems.Count) * 25);
+                    int overallPct = (int)(((double)c / speechItems.Count) * 20);
                     _progress.Report(jobId, 1, stepPct, overallPct, $"[TTS] Synthesized dialogue segment {c}/{speechItems.Count} ({seg.Duration:F1}s)");
+
+                    // Immediately extract phonemes for this segment in background
+                    string segPhonemesJson = Path.Combine(sessionDir, $"phonemes_seg_{seg.Index}.json");
+                    await ExtractSegmentPhonemesAsync(segmentWav, segPhonemesJson, ct);
+                    if (File.Exists(segPhonemesJson))
+                    {
+                        using var doc = JsonDocument.Parse(await File.ReadAllTextAsync(segPhonemesJson, ct));
+                        if (doc.RootElement.TryGetProperty("mouthCues", out var cues))
+                        {
+                            foreach (var item in cues.EnumerateArray())
+                            {
+                                seg.MouthCues.Add(new MouthCueItem
+                                {
+                                    start = item.GetProperty("start").GetDouble(),
+                                    end = item.GetProperty("end").GetDouble(),
+                                    value = item.GetProperty("value").GetString() ?? "X"
+                                });
+                            }
+                        }
+                    }
                 }
                 finally
                 {
@@ -192,6 +228,7 @@ namespace PodcastEngine.Api.Services
             var sfxCues = new List<SfxCue>();
             var bgmCues = new List<BgmCue>();
             var orderedAudioFiles = new List<string>();
+            var masterMouthCues = new List<MouthCueItem>();
             bool hasActiveOverlay = false;
 
             foreach (var seg in parsedSegments)
@@ -255,6 +292,18 @@ namespace PodcastEngine.Api.Services
                 {
                     timeline.Add(new TimelineEvent { time = runningTime, type = "text", value = seg.SpeechText });
                     orderedAudioFiles.Add(seg.WavPath);
+
+                    // Offset this segment's lip-sync cues to its exact position on the master timeline
+                    foreach (var cue in seg.MouthCues)
+                    {
+                        masterMouthCues.Add(new MouthCueItem
+                        {
+                            start = Math.Round(runningTime + cue.start, 3),
+                            end = Math.Round(runningTime + cue.end, 3),
+                            value = cue.value
+                        });
+                    }
+
                     runningTime += seg.Duration;
                 }
             }
@@ -264,46 +313,54 @@ namespace PodcastEngine.Api.Services
             _progress.Report(jobId, 1, 100, 25, $"[TTS] Master speech track assembled. Total length: {runningTime:F1}s");
 
             string phonemesJsonPath = Path.Combine(sessionDir, "phonemes.json");
+            var phonemesPayload = new
+            {
+                metadata = new { duration = Math.Round(runningTime, 2) },
+                mouthCues = masterMouthCues.OrderBy(c => c.start).ToList()
+            };
+            await File.WriteAllTextAsync(phonemesJsonPath, JsonSerializer.Serialize(phonemesPayload, new JsonSerializerOptions { WriteIndented = true }), new UTF8Encoding(false), ct);
+            _progress.Report(jobId, 2, 100, 50, $"[Rhubarb] Generated {masterMouthCues.Count} lip-sync cues.");
+
             string timelinePath = Path.Combine(sessionDir, "timeline.json");
+            var timelineTask = File.WriteAllTextAsync(timelinePath, JsonSerializer.Serialize(timeline, new JsonSerializerOptions { WriteIndented = true }), new UTF8Encoding(false), ct);
+
             string bgmMasterWav = Path.Combine(sessionDir, "bgm_composed.wav");
             string masterMixWav = Path.Combine(sessionDir, "master_mix.wav");
 
-            // Write timeline while starting parallel tasks
-            var timelineTask = File.WriteAllTextAsync(timelinePath, JsonSerializer.Serialize(timeline, new JsonSerializerOptions { WriteIndented = true }), new UTF8Encoding(false), ct);
-
-            // Branch 1: Rhubarb Phoneme Extraction
-            var rhubarbTask = Task.Run(async () =>
-            {
-                _progress.Report(jobId, 2, 0, 25, "[Rhubarb] Generating phonemes aligned to speech master...");
-                await GeneratePhonemesAsync(rawSpeechWav, phonemesJsonPath, jobId, ct);
-
-                int mouthCuesCount = 0;
-                if (File.Exists(phonemesJsonPath))
-                {
-                    using var doc = JsonDocument.Parse(await File.ReadAllTextAsync(phonemesJsonPath, ct));
-                    if (doc.RootElement.TryGetProperty("mouthCues", out var cues))
-                        mouthCuesCount = cues.GetArrayLength();
-                }
-                _progress.Report(jobId, 2, 100, 50, $"[Rhubarb] Generated {mouthCuesCount} lip-sync cues.");
-            }, ct);
-
-            // Branch 2: BGM Assembly and Sidechain Ducking
+            _progress.Report(jobId, 3, 0, 50, "[FFmpeg] Building dynamic soundtrack and sidechain ducking...");
             var audioMasterTask = Task.Run(async () =>
             {
-                _progress.Report(jobId, 3, 0, 50, "[FFmpeg] Building dynamic soundtrack and sidechain ducking...");
                 await BuildCompositeBgmTrackAsync(bgmCues, runningTime, bgmMasterWav, ct);
                 await ApplySidechainDuckingAndSfxAsync(rawSpeechWav, bgmMasterWav, sfxCues, masterMixWav, jobId, ct);
                 _progress.Report(jobId, 3, 100, 70, "[FFmpeg] Sidechain ducking applied. Master mix ready.");
             }, ct);
 
-            // Wait for all pre-render audio pipelines to complete concurrently
-            await Task.WhenAll(timelineTask, rhubarbTask, audioMasterTask);
+            await Task.WhenAll(timelineTask, audioMasterTask);
 
             _progress.Report(jobId, 4, 0, 70, $"[Three.js] Initializing Headless Chromium WebGL context for avatar: {avatar}...");
             string outputMp4 = Path.Combine(sessionDir, "podcast.mp4");
 
             await RenderAvatarAsync(jobId, sessionDir, timelinePath, phonemesJsonPath, masterMixWav, outputMp4, avatar, ct);
             _progress.Report(jobId, 4, 100, 100, "[Render Complete] Video broadcast exported: podcast.mp4", "completed");
+        }
+
+        private async Task ExtractSegmentPhonemesAsync(string segmentWav, string outputJson, CancellationToken ct)
+        {
+            string rhubarbExe = @"D:\Rhubarb\Rhubarb-Lip-Sync-1.14.0-Windows\rhubarb.exe";
+            if (!File.Exists(rhubarbExe)) rhubarbExe = "rhubarb";
+
+            var psi = new ProcessStartInfo
+            {
+                FileName = rhubarbExe,
+                Arguments = $"-r phonetic -f json -o \"{outputJson}\" \"{segmentWav}\"",
+                CreateNoWindow = true,
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true
+            };
+
+            using var p = Process.Start(psi);
+            if (p != null) await p.WaitForExitAsync(ct);
         }
 
         private void CreateSilenceWav(string outputPath, double seconds)
@@ -392,7 +449,7 @@ namespace PodcastEngine.Api.Services
                 throw new InvalidOperationException($"FFmpeg concat failed (Exit {p.ExitCode}): {err}");
         }
 
-        private async Task SynthesizeSegmentSpeechAsync(string text, string outputPath, string avatar, CancellationToken ct)
+        private async Task SynthesizeSegmentSpeechAsync(string text, string outputPath, string avatar, string tone, CancellationToken ct)
         {
             text = Regex.Replace(text, @"(?<=[\d\u09E6-\u09EF])\s*[-\u2013\u2014]\s*(?=[\d\u09E6-\u09EF])", " ");
             text = Regex.Replace(text, @"(?<=[০-৯])\s*[-–—]\s*(?=[০-৯])", " ");
@@ -402,7 +459,7 @@ namespace PodcastEngine.Api.Services
             var psi = new ProcessStartInfo
             {
                 FileName = "node",
-                Arguments = $"synthesize_speech.js \"{txtFile}\" \"{outputPath}\" \"{avatar}\"",
+                Arguments = $"synthesize_speech.js \"{txtFile}\" \"{outputPath}\" \"{avatar}\" \"{tone}\"",
                 WorkingDirectory = PathHelper.AvatarRendererBase,
                 CreateNoWindow = true,
                 UseShellExecute = false,
@@ -517,75 +574,6 @@ namespace PodcastEngine.Api.Services
             foreach (var f in segmentWavs) { if (File.Exists(f)) File.Delete(f); }
         }
 
-        private async Task GeneratePhonemesAsync(string inputWav, string outputJson, string jobId, CancellationToken ct)
-        {
-            if (!File.Exists(inputWav))
-                throw new FileNotFoundException($"Input speech file does not exist: {inputWav}");
-
-            string rhubarbExe = @"D:\Rhubarb\Rhubarb-Lip-Sync-1.14.0-Windows\rhubarb.exe";
-            if (!File.Exists(rhubarbExe)) rhubarbExe = "rhubarb";
-
-            var psi = new ProcessStartInfo
-            {
-                FileName = rhubarbExe,
-                Arguments = $"-r phonetic -f json -o \"{outputJson}\" \"{inputWav}\"",
-                CreateNoWindow = true,
-                UseShellExecute = false,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true
-            };
-
-            using var p = new Process { StartInfo = psi };
-            var stderr = new StringBuilder();
-
-            p.OutputDataReceived += (_, e) => { };
-            p.ErrorDataReceived += (_, e) =>
-            {
-                if (!string.IsNullOrWhiteSpace(e.Data))
-                {
-                    stderr.AppendLine(e.Data);
-                    var match = Regex.Match(e.Data, @"(\d{1,3})%");
-                    if (match.Success && int.TryParse(match.Groups[1].Value, out int pct))
-                    {
-                        int stepPct = Math.Clamp(pct, 0, 100);
-                        int overallPct = Math.Clamp(25 + (int)Math.Round(pct * 0.25), 25, 50);
-                        _progress.Report(jobId, 2, stepPct, overallPct, $"[Rhubarb] Analyzing speech phonetics ({stepPct}%)");
-                    }
-                }
-            };
-
-            p.Start();
-            p.BeginOutputReadLine();
-            p.BeginErrorReadLine();
-
-            using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            var ticker = Task.Run(async () =>
-            {
-                int cur = 5;
-                while (!p.HasExited)
-                {
-                    try { await Task.Delay(500); } catch { break; }
-                    if (p.HasExited || cts.Token.IsCancellationRequested) break;
-
-                    if (cur < 95)
-                    {
-                        cur += 5;
-                        int overallPct = Math.Clamp(25 + (int)Math.Round(cur * 0.25), 25, 50);
-                        _progress.Report(jobId, 2, cur, overallPct, $"[Rhubarb] Analyzing speech phonetics ({cur}%)...");
-                    }
-                }
-            }, cts.Token);
-
-            await p.WaitForExitAsync(ct);
-            cts.Cancel();
-
-            if (p.ExitCode != 0 || !File.Exists(outputJson))
-            {
-                string errText = stderr.ToString().Trim();
-                throw new InvalidOperationException($"Rhubarb failed (Exit {p.ExitCode}): {errText}");
-            }
-        }
-
         private async Task ApplySidechainDuckingAndSfxAsync(string speechWav, string bgmTrackWav, List<SfxCue> sfxCues, string outputWav, string jobId, CancellationToken ct)
         {
             var sb = new StringBuilder();
@@ -639,9 +627,107 @@ namespace PodcastEngine.Api.Services
                 throw new InvalidOperationException($"FFmpeg mastering failed (Exit {p.ExitCode}): {err}");
         }
 
+        private async Task EnsureWarmDaemonActiveAsync(CancellationToken ct)
+        {
+            await _daemonLock.WaitAsync(ct);
+            try
+            {
+                bool isHealthy = false;
+                try
+                {
+                    using var cts = new CancellationTokenSource(800);
+                    var resp = await _httpClient.GetAsync($"http://127.0.0.1:{DaemonPort}/health", cts.Token);
+                    if (resp.IsSuccessStatusCode) isHealthy = true;
+                }
+                catch { }
+
+                if (isHealthy) return;
+
+                if (_daemonProcess != null && !_daemonProcess.HasExited)
+                {
+                    try { _daemonProcess.Kill(true); } catch { }
+                }
+
+                var psi = new ProcessStartInfo
+                {
+                    FileName = "node",
+                    Arguments = $"render_avatar.js --daemon {DaemonPort}",
+                    WorkingDirectory = PathHelper.AvatarRendererBase,
+                    CreateNoWindow = true,
+                    UseShellExecute = false
+                };
+
+                _daemonProcess = Process.Start(psi);
+
+                for (int i = 0; i < 20; i++)
+                {
+                    await Task.Delay(500, ct);
+                    try
+                    {
+                        using var cts = new CancellationTokenSource(800);
+                        var resp = await _httpClient.GetAsync($"http://127.0.0.1:{DaemonPort}/health", cts.Token);
+                        if (resp.IsSuccessStatusCode) return;
+                    }
+                    catch { }
+                }
+            }
+            finally
+            {
+                _daemonLock.Release();
+            }
+        }
+
         private async Task RenderAvatarAsync(string jobId, string sessionDir, string timelinePath, string phonemesPath, string audioPath, string outputPath, string avatar, CancellationToken ct)
         {
-            var psi = new ProcessStartInfo
+            try
+            {
+                await EnsureWarmDaemonActiveAsync(ct);
+
+                var payload = new
+                {
+                    sessionDir,
+                    timelinePath,
+                    phonemesPath,
+                    audioPath,
+                    outputPath,
+                    avatar
+                };
+
+                var content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
+                using var req = new HttpRequestMessage(HttpMethod.Post, $"http://127.0.0.1:{DaemonPort}/render") { Content = content };
+                using var response = await _httpClient.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct);
+
+                if (response.IsSuccessStatusCode)
+                {
+                    using var stream = await response.Content.ReadAsStreamAsync(ct);
+                    using var reader = new StreamReader(stream);
+                    while (!ct.IsCancellationRequested)
+                    {
+                        var line = await reader.ReadLineAsync(ct);
+                        if (line == null) break;
+                        if (string.IsNullOrEmpty(line)) continue;
+
+                        if (line.StartsWith("PROGRESS:"))
+                        {
+                            var parts = line.Split(':');
+                            if (parts.Length == 3 && int.TryParse(parts[1], out int cur) && int.TryParse(parts[2], out int total))
+                            {
+                                int stepPct = (int)((cur * 100.0) / total);
+                                int overallPct = 70 + (int)((cur * 30.0) / total);
+                                _progress.Report(jobId, 4, stepPct, overallPct, $"[Three.js] Rendered frame {cur}/{total} ({stepPct}%)");
+                            }
+                        }
+                    }
+
+                    if (File.Exists(outputPath)) return;
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[Warm Daemon Warning] Fallback to standard CLI render process: {ex.Message}");
+            }
+
+            var directPsi = new ProcessStartInfo
             {
                 FileName = "node",
                 Arguments = $"render_avatar.js \"{sessionDir}\" \"{timelinePath}\" \"{phonemesPath}\" \"{audioPath}\" \"{outputPath}\" \"{avatar}\"",
@@ -652,12 +738,10 @@ namespace PodcastEngine.Api.Services
                 RedirectStandardError = true
             };
 
-            using var p = Process.Start(psi) ?? throw new InvalidOperationException("Failed to invoke avatar renderer.");
-
+            using var p = Process.Start(directPsi) ?? throw new InvalidOperationException("Failed to invoke avatar renderer.");
             p.OutputDataReceived += (_, e) =>
             {
                 if (string.IsNullOrEmpty(e.Data)) return;
-
                 if (e.Data.StartsWith("PROGRESS:"))
                 {
                     var parts = e.Data.Split(':');
