@@ -1,8 +1,7 @@
-﻿using System;
+using System;
+using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.IO;
-using System.Linq;
-using System.Text.Json;
-using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Http;
@@ -13,15 +12,12 @@ using PodcastEngine.Api.Services;
 namespace PodcastEngine.Api.Controllers
 {
     [ApiController]
-    [Route("api/video")]
+    [Route("api/[controller]")]
     public class VideoController : ControllerBase
     {
         private readonly PodcastPipelineService _pipeline;
         private readonly JobProgressService _progress;
-        private static readonly JsonSerializerOptions JsonOptions = new()
-        {
-            PropertyNamingPolicy = JsonNamingPolicy.CamelCase
-        };
+        private static readonly ConcurrentDictionary<string, CancellationTokenSource> _jobTokens = new();
 
         public VideoController(PodcastPipelineService pipeline, JobProgressService progress)
         {
@@ -29,135 +25,129 @@ namespace PodcastEngine.Api.Controllers
             _progress = progress;
         }
 
-        [HttpPost("start")]
         [HttpPost("start-job")]
         [RequestSizeLimit(100_000_000)]
-        public async Task<IActionResult> Start([FromForm] string script, [FromForm] IFormFileCollection? files, [FromForm] string? avatar)
+        public async Task<IActionResult> StartJob()
         {
-            try
+            string jobId = Guid.NewGuid().ToString("N");
+            string script = Request.Form["script"].ToString();
+            string avatar = Request.Form.ContainsKey("avatar") ? Request.Form["avatar"].ToString() : "shubo";
+
+            if (string.IsNullOrWhiteSpace(script))
             {
-                string jobId = Guid.NewGuid().ToString("N")[..8];
-                string sessionDir = Path.Combine(PathHelper.StorageBase, jobId);
-                string overlaysDir = Path.Combine(sessionDir, "overlays");
-                Directory.CreateDirectory(sessionDir);
-                Directory.CreateDirectory(overlaysDir);
+                return BadRequest(new { message = "Script cannot be empty." });
+            }
 
-                string chosenAvatar = string.IsNullOrWhiteSpace(avatar) ? "mina" : avatar.Trim().ToLower();
+            string sessionDir = Path.Combine(PathHelper.StorageBase, jobId);
+            Directory.CreateDirectory(sessionDir);
+            string overlaysDir = Path.Combine(sessionDir, "overlays");
+            Directory.CreateDirectory(overlaysDir);
 
-                // Extract all [Show: "filename"] directive target names
-                var showMatches = Regex.Matches(script ?? "", @"\[Show:\s*[""']?([^""'\]\s]+)[""']?", RegexOptions.IgnoreCase);
-                var targetNames = showMatches.Select(m => Path.GetFileName(m.Groups[1].Value.Trim('\"', '\'', ' ')))
-                                             .Where(s => !string.IsNullOrEmpty(s))
-                                             .Distinct(StringComparer.OrdinalIgnoreCase)
-                                             .ToList();
-
-                var incomingFiles = (files != null && files.Count > 0) ? files : Request.Form.Files;
-
-                if (incomingFiles != null && incomingFiles.Count > 0)
+            foreach (var file in Request.Form.Files)
+            {
+                if (file.Length > 0)
                 {
-                    int idx = 0;
-                    foreach (var file in incomingFiles)
+                    var namesToSave = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    if (!string.IsNullOrWhiteSpace(file.FileName)) namesToSave.Add(file.FileName);
+                    if (!string.IsNullOrWhiteSpace(file.Name) && file.Name != "files" && file.Name != "overlays") namesToSave.Add(file.Name);
+
+                    foreach (var rawName in namesToSave)
                     {
-                        if (file.Length == 0) continue;
-
-                        string originalName = Path.GetFileName(file.FileName.Trim('\"', '\'', ' '));
-                        if (string.IsNullOrEmpty(originalName)) originalName = $"overlay_{idx}.png";
-
-                        // 1. Save directly into session root storage (Storage/<jobId>/)
-                        string rootPath = Path.Combine(sessionDir, originalName);
-                        using (var fs = new FileStream(rootPath, FileMode.Create, FileAccess.Write))
+                        string targetName = Path.GetFileName(rawName).Trim().Replace("\"", "").Replace("'", "");
+                        if (!string.IsNullOrEmpty(targetName) && targetName != "files" && targetName != "overlays" && targetName != "script" && targetName != "avatar")
                         {
-                            await file.CopyToAsync(fs);
+                            var overlaySavePath = Path.Combine(overlaysDir, targetName);
+                            using (var stream = new FileStream(overlaySavePath, FileMode.Create))
+                            {
+                                await file.CopyToAsync(stream);
+                            }
+                            var rootSavePath = Path.Combine(sessionDir, targetName);
+                            System.IO.File.Copy(overlaySavePath, rootSavePath, true);
                         }
-
-                        // 2. Mirror into overlays/ folder
-                        string overlayPath = Path.Combine(overlaysDir, originalName);
-                        if (!string.Equals(Path.GetFullPath(rootPath), Path.GetFullPath(overlayPath), StringComparison.OrdinalIgnoreCase))
-                        {
-                            System.IO.File.Copy(rootPath, overlayPath, true);
-                        }
-
-                        // 3. Map to corresponding [Show: "..."] directive name
-                        if (targetNames.Count > 0)
-                        {
-                            string targetName = idx < targetNames.Count ? targetNames[idx] : targetNames[0];
-                            string targetRoot = Path.Combine(sessionDir, targetName);
-                            string targetOverlay = Path.Combine(overlaysDir, targetName);
-
-                            if (!string.Equals(Path.GetFullPath(rootPath), Path.GetFullPath(targetRoot), StringComparison.OrdinalIgnoreCase))
-                                System.IO.File.Copy(rootPath, targetRoot, true);
-
-                            if (!string.Equals(Path.GetFullPath(rootPath), Path.GetFullPath(targetOverlay), StringComparison.OrdinalIgnoreCase))
-                                System.IO.File.Copy(rootPath, targetOverlay, true);
-                        }
-
-                        idx++;
                     }
                 }
-
-                var jobToken = _progress.CreateJobToken(jobId);
-
-                _ = Task.Run(async () =>
-                {
-                    try
-                    {
-                        await _pipeline.ExecutePipelineAsync(jobId, script ?? "", sessionDir, chosenAvatar, jobToken);
-                    }
-                    catch (OperationCanceledException)
-                    {
-                        _progress.Report(jobId, 4, 0, 100, "Render Halted: Job canceled by user.", "failed");
-                    }
-                    catch (Exception ex)
-                    {
-                        _progress.Report(jobId, 4, 0, 100, $"Fatal Error: {ex.Message}", "failed");
-                    }
-                }, CancellationToken.None);
-
-                return Ok(new { jobId });
             }
-            catch (Exception ex)
+
+            var cts = new CancellationTokenSource();
+            _jobTokens[jobId] = cts;
+            var ct = cts.Token;
+
+            _ = Task.Run(async () =>
             {
-                return StatusCode(500, new { error = ex.Message });
-            }
+                try
+                {
+                    await _pipeline.ExecutePipelineAsync(jobId, script, sessionDir, avatar, ct);
+                }
+                catch (OperationCanceledException)
+                {
+                    _progress.Report(jobId, 0, 0, 0, "Job canceled by user.", "canceled");
+                }
+                catch (Exception ex)
+                {
+                    _progress.Report(jobId, 0, 0, 0, $"Fatal execution error: {ex.Message}", "failed");
+                }
+                finally
+                {
+                    if (_jobTokens.TryRemove(jobId, out var removedCts))
+                    {
+                        removedCts.Dispose();
+                    }
+                }
+            });
+
+            return Ok(new { jobId });
         }
 
         [HttpGet("stream/{jobId}")]
-        public async Task Stream(string jobId, CancellationToken ct)
+        public async Task Stream(string jobId)
         {
             Response.Headers.Append("Content-Type", "text/event-stream");
             Response.Headers.Append("Cache-Control", "no-cache");
             Response.Headers.Append("Connection", "keep-alive");
 
-            var reader = _progress.GetReader(jobId);
-
+            var subscription = _progress.Subscribe(jobId);
             try
             {
-                while (await reader.WaitToReadAsync(ct))
+                while (await subscription.Reader.WaitToReadAsync(HttpContext.RequestAborted))
                 {
-                    while (reader.TryRead(out var ev))
+                    while (subscription.Reader.TryRead(out var progressEvent))
                     {
-                        string json = JsonSerializer.Serialize(ev, JsonOptions);
-                        await Response.WriteAsync($"data: {json}\n\n", ct);
-                        await Response.Body.FlushAsync(ct);
+                        string json = System.Text.Json.JsonSerializer.Serialize(progressEvent);
+                        await Response.WriteAsync($"data: {json}\n\n");
+                        await Response.Body.FlushAsync();
+
+                        if (progressEvent.status == "completed" || progressEvent.status == "failed" || progressEvent.status == "canceled")
+                        {
+                            return;
+                        }
                     }
                 }
             }
-            catch (OperationCanceledException) { }
+            finally
+            {
+                _progress.Unsubscribe(jobId, subscription);
+            }
         }
 
         [HttpPost("cancel/{jobId}")]
         public IActionResult Cancel(string jobId)
         {
-            _progress.CancelJob(jobId);
-            return Ok(new { status = "canceled" });
+            if (_jobTokens.TryGetValue(jobId, out var cts))
+            {
+                cts.Cancel();
+            }
+            return Ok(new { message = "Cancellation signaled." });
         }
 
         [HttpGet("download/{jobId}")]
         public IActionResult Download(string jobId)
         {
-            string mp4 = Path.Combine(PathHelper.StorageBase, jobId, "podcast.mp4");
-            if (!System.IO.File.Exists(mp4)) return NotFound("Rendered video not found.");
-            return PhysicalFile(mp4, "video/mp4", enableRangeProcessing: true);
+            string videoPath = Path.Combine(PathHelper.StorageBase, jobId, "podcast.mp4");
+            if (!System.IO.File.Exists(videoPath))
+            {
+                return NotFound(new { message = "Rendered video file not found." });
+            }
+            return PhysicalFile(videoPath, "video/mp4", "podcast.mp4");
         }
     }
 }

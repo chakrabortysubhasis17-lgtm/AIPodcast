@@ -1,78 +1,82 @@
-﻿using System;
+using System;
 using System.Collections.Concurrent;
-using System.Collections.Generic;
-using System.Threading;
 using System.Threading.Channels;
-using System.Threading.Tasks;
 
 namespace PodcastEngine.Api.Services
 {
     public class JobProgressEvent
     {
-        public int Step { get; set; } = 1;
-        public int StepProgress { get; set; } = 0;
-        public int OverallProgress { get; set; } = 0;
-        public string Message { get; set; } = string.Empty;
-        public string Timestamp { get; set; } = DateTime.Now.ToString("HH:mm:ss");
-        public string Status { get; set; } = "running"; // running, completed, failed
+        public string jobId { get; set; } = string.Empty;
+        public int step { get; set; }
+        public int stepProgress { get; set; }
+        public int overallProgress { get; set; }
+        public string message { get; set; } = string.Empty;
+        public string status { get; set; } = "in_progress";
+        public string? error { get; set; }
+        public string? downloadUrl { get; set; }
+    }
+
+    public class JobProgressSubscription
+    {
+        public Guid Id { get; } = Guid.NewGuid();
+        public Channel<JobProgressEvent> Channel { get; }
+        public ChannelReader<JobProgressEvent> Reader => Channel.Reader;
+
+        public JobProgressSubscription()
+        {
+            Channel = System.Threading.Channels.Channel.CreateUnbounded<JobProgressEvent>(new UnboundedChannelOptions
+            {
+                SingleWriter = false,
+                SingleReader = true
+            });
+        }
     }
 
     public class JobProgressService
     {
-        private readonly ConcurrentDictionary<string, Channel<JobProgressEvent>> _channels = new();
-        private readonly ConcurrentDictionary<string, List<JobProgressEvent>> _history = new();
-        private readonly ConcurrentDictionary<string, CancellationTokenSource> _cancellationTokens = new();
+        private readonly ConcurrentDictionary<string, ConcurrentDictionary<Guid, JobProgressSubscription>> _subscribers = new();
 
-        public CancellationToken CreateJobToken(string jobId)
+        public void Report(string jobId, int step, int stepProgress, int overallProgress, string message, string status = "in_progress")
         {
-            var cts = new CancellationTokenSource();
-            _cancellationTokens[jobId] = cts;
-            return cts.Token;
-        }
-
-        public void CancelJob(string jobId)
-        {
-            if (_cancellationTokens.TryGetValue(jobId, out var cts))
+            var evt = new JobProgressEvent
             {
-                cts.Cancel();
+                jobId = jobId,
+                step = step,
+                stepProgress = stepProgress,
+                overallProgress = overallProgress,
+                message = message,
+                status = status
+            };
+
+            if (_subscribers.TryGetValue(jobId, out var jobSubs))
+            {
+                foreach (var sub in jobSubs.Values)
+                {
+                    sub.Channel.Writer.TryWrite(evt);
+                }
             }
         }
 
-        public ChannelReader<JobProgressEvent> GetReader(string jobId)
+        public JobProgressSubscription Subscribe(string jobId)
         {
-            var channel = _channels.GetOrAdd(jobId, _ => Channel.CreateUnbounded<JobProgressEvent>(new UnboundedChannelOptions
-            {
-                SingleWriter = false,
-                SingleReader = false
-            }));
-            return channel.Reader;
+            var sub = new JobProgressSubscription();
+            var jobSubs = _subscribers.GetOrAdd(jobId, _ => new ConcurrentDictionary<Guid, JobProgressSubscription>());
+            jobSubs[sub.Id] = sub;
+            return sub;
         }
 
-        public List<JobProgressEvent> GetHistory(string jobId)
+        public void Unsubscribe(string jobId, JobProgressSubscription sub)
         {
-            return _history.TryGetValue(jobId, out var list) ? list : new List<JobProgressEvent>();
-        }
-
-        public void Report(string jobId, int step, int stepProgress, int overallProgress, string message, string status = "running")
-        {
-            var ev = new JobProgressEvent
+            if (sub != null && _subscribers.TryGetValue(jobId, out var jobSubs))
             {
-                Step = step,
-                StepProgress = Math.Clamp(stepProgress, 0, 100),
-                OverallProgress = Math.Clamp(overallProgress, 0, 100),
-                Message = message,
-                Status = status
-            };
-
-            var list = _history.GetOrAdd(jobId, _ => new List<JobProgressEvent>());
-            lock (list) list.Add(ev);
-
-            var channel = _channels.GetOrAdd(jobId, _ => Channel.CreateUnbounded<JobProgressEvent>());
-            channel.Writer.TryWrite(ev);
-
-            if (status == "completed" || status == "failed")
-            {
-                channel.Writer.TryComplete();
+                if (jobSubs.TryRemove(sub.Id, out var removedSub))
+                {
+                    removedSub.Channel.Writer.TryComplete();
+                }
+                if (jobSubs.IsEmpty)
+                {
+                    _subscribers.TryRemove(jobId, out _);
+                }
             }
         }
     }

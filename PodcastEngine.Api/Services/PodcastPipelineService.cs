@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
@@ -15,54 +14,6 @@ using PodcastEngine.Api.Common;
 
 namespace PodcastEngine.Api.Services
 {
-    public class TimelineEvent
-    {
-        public double time { get; set; }
-        public string type { get; set; } = string.Empty;
-        public string value { get; set; } = string.Empty;
-        public string position { get; set; } = "top-left";
-    }
-
-    public class SfxCue
-    {
-        public double Time { get; set; }
-        public string FilePath { get; set; } = string.Empty;
-    }
-
-    public class BgmCue
-    {
-        public double Time { get; set; }
-        public string FilePath { get; set; } = string.Empty;
-    }
-
-    public class MouthCueItem
-    {
-        public double start { get; set; }
-        public double end { get; set; }
-        public string value { get; set; } = string.Empty;
-    }
-
-    internal class ScriptSegment
-    {
-        public int Index { get; set; }
-        public double PauseSec { get; set; }
-        public string Cam { get; set; } = string.Empty;
-        public string Emotion { get; set; } = string.Empty;
-        public string Gesture { get; set; } = string.Empty;
-        public string LowerThird { get; set; } = string.Empty;
-        public string Show { get; set; } = string.Empty;
-        public string ShowPos { get; set; } = "top-left";
-        public bool Hide { get; set; }
-        public List<string> SfxList { get; set; } = new();
-        public string Bgm { get; set; } = string.Empty;
-        public string Tone { get; set; } = "neutral";
-        public string Stinger { get; set; } = string.Empty;
-        public string SpeechText { get; set; } = string.Empty;
-        public string WavPath { get; set; } = string.Empty;
-        public double Duration { get; set; }
-        public List<MouthCueItem> MouthCues { get; set; } = new();
-    }
-
     public class PodcastPipelineService
     {
         private readonly JobProgressService _progress;
@@ -138,11 +89,9 @@ namespace PodcastEngine.Api.Services
 
                 var seg = new ScriptSegment { Index = pIdx };
 
-                // CR-013: Demeanor tone tracking (paragraph-scoped)
                 var toneMatch = Regex.Match(para, @"\[(Friendly|Formal|Informal|Authoritative)\]", RegexOptions.IgnoreCase);
                 seg.Tone = toneMatch.Success ? toneMatch.Groups[1].Value.Trim().ToLower() : "neutral";
 
-                // CR-014: Stinger cues
                 var stingerMatch = Regex.Match(para, @"\[Stinger(?::\s*([a-zA-Z0-9_\s-]+))?\]", RegexOptions.IgnoreCase);
                 if (stingerMatch.Success)
                 {
@@ -162,6 +111,12 @@ namespace PodcastEngine.Api.Services
                 var gestMatch = Regex.Match(para, @"\[Gesture:\s*([a-zA-Z0-9_\s-]+)\]", RegexOptions.IgnoreCase);
                 if (gestMatch.Success) seg.Gesture = gestMatch.Groups[1].Value.Trim().ToLower();
 
+                var bgMatch = Regex.Match(para, @"\[Bg:\s*[""']?([^""'\]\s]+)[""']?\]", RegexOptions.IgnoreCase);
+                if (bgMatch.Success) seg.Bg = bgMatch.Groups[1].Value.Trim();
+
+                var iconMatch = Regex.Match(para, @"\[(?:Icon|Emoji):\s*[""']?([^""'\]]+)[""']?\]", RegexOptions.IgnoreCase);
+                if (iconMatch.Success) seg.Icon = iconMatch.Groups[1].Value.Trim();
+
                 var ltMatch = Regex.Match(para, @"\[LowerThird:\s*[""']?([^""'\]]+)[""']?\]", RegexOptions.IgnoreCase);
                 if (ltMatch.Success) seg.LowerThird = ltMatch.Groups[1].Value.Trim();
 
@@ -172,14 +127,23 @@ namespace PodcastEngine.Api.Services
                     seg.ShowPos = "top-left";
                 }
 
-                if (Regex.IsMatch(para, @"\[Hide(?::\s*Overlay)?\]", RegexOptions.IgnoreCase))
+                var hideMatches = Regex.Matches(para, @"\[Hide(?::\s*([a-zA-Z0-9_\s-]+))?\]", RegexOptions.IgnoreCase);
+                foreach (Match hm in hideMatches)
+                {
+                    string target = hm.Groups[1].Success ? hm.Groups[1].Value.Trim().ToLower() : "overlay";
+                    seg.HideTargets.Add(target);
                     seg.Hide = true;
+                }
 
-                // Support multiple SFX on a single block
                 var sfxMatches = Regex.Matches(para, @"\[SFX:\s*([a-zA-Z0-9_\s-]+)\]", RegexOptions.IgnoreCase);
                 foreach (Match m in sfxMatches)
                 {
                     seg.SfxList.Add(m.Groups[1].Value.Trim());
+                }
+
+                if (seg.SfxList.Count > 0 && seg.PauseSec > 0)
+                {
+                    seg.PauseSec = Math.Max(0.0, seg.PauseSec - 0.8);
                 }
 
                 var bgmMatch = Regex.Match(para, @"\[BGM:\s*([a-zA-Z0-9_\s-]+)\]", RegexOptions.IgnoreCase);
@@ -187,7 +151,12 @@ namespace PodcastEngine.Api.Services
                 if (isDefBgm) seg.Bgm = "lofi";
                 else if (bgmMatch.Success) seg.Bgm = bgmMatch.Groups[1].Value.Trim();
 
-                seg.SpeechText = Regex.Replace(para, @"\[.*?\]", "").Trim();
+                var ambMatch = Regex.Match(para, @"\[(?:Ambience|Atmosphere):\s*[""']?([^""'\]\s]+)[""']?\]", RegexOptions.IgnoreCase);
+                if (ambMatch.Success) seg.Ambience = ambMatch.Groups[1].Value.Trim();
+
+                string extractedSpeech = Regex.Replace(para, @"\[.*?\]", "").Trim();
+                seg.SpeechText = BengaliPhoneticNormalizer.Normalize(extractedSpeech);
+
                 parsedSegments.Add(seg);
             }
 
@@ -241,13 +210,13 @@ namespace PodcastEngine.Api.Services
             var timeline = new List<TimelineEvent>();
             var sfxCues = new List<SfxCue>();
             var bgmCues = new List<BgmCue>();
+            var ambienceCues = new List<AmbienceCue>();
             var orderedAudioFiles = new List<string>();
             var masterMouthCues = new List<MouthCueItem>();
             bool hasActiveOverlay = false;
 
             foreach (var seg in parsedSegments)
             {
-                // 1. Handle explicit pause directives
                 if (seg.PauseSec > 0)
                 {
                     string pauseWav = Path.Combine(sessionDir, $"pause_{seg.Index}.wav");
@@ -259,7 +228,6 @@ namespace PodcastEngine.Api.Services
                     }
                 }
 
-                // 2. Continuous environmental audio cues (BGM and Stinger)
                 if (!string.IsNullOrEmpty(seg.Bgm))
                 {
                     string resolved = ResolveBgmFile(seg.Bgm);
@@ -270,13 +238,23 @@ namespace PodcastEngine.Api.Services
                     }
                 }
 
+                if (!string.IsNullOrEmpty(seg.Ambience))
+                {
+                    string resolvedAmb = ResolveAmbienceFile(seg.Ambience);
+                    if (File.Exists(resolvedAmb))
+                    {
+                        ambienceCues.Add(new AmbienceCue { Time = runningTime, FilePath = resolvedAmb });
+                        timeline.Add(new TimelineEvent { time = runningTime, type = "ambience", value = seg.Ambience });
+                    }
+                }
+
                 if (!string.IsNullOrEmpty(seg.Stinger))
                 {
                     string resolvedStinger = ResolveStingerFile(seg.Stinger);
                     if (File.Exists(resolvedStinger))
                     {
                         string clampedStinger = Path.Combine(sessionDir, $"stinger_{seg.Index}.wav");
-                        ClampSfxAudio(resolvedStinger, clampedStinger, 4.0);
+                        ClampSfxAudio(resolvedStinger, clampedStinger, 3.5);
                         string finalStinger = File.Exists(clampedStinger) ? clampedStinger : resolvedStinger;
 
                         sfxCues.Add(new SfxCue { Time = runningTime, FilePath = finalStinger });
@@ -284,7 +262,6 @@ namespace PodcastEngine.Api.Services
                     }
                 }
 
-                // 3. Isolated Sound Effects dispatch (Clamped to 3.0 seconds max)
                 double sfxHoldDuration = 0.0;
                 int sfxSubIdx = 0;
                 foreach (var sfxItem in seg.SfxList)
@@ -293,16 +270,15 @@ namespace PodcastEngine.Api.Services
                     if (File.Exists(resolved))
                     {
                         string clampedSfx = Path.Combine(sessionDir, $"sfx_{seg.Index}_{sfxSubIdx++}.wav");
-                        ClampSfxAudio(resolved, clampedSfx, 3.0);
+                        ClampSfxAudio(resolved, clampedSfx, 2.2);
                         string finalSfx = File.Exists(clampedSfx) ? clampedSfx : resolved;
 
                         sfxCues.Add(new SfxCue { Time = runningTime, FilePath = finalSfx });
                         timeline.Add(new TimelineEvent { time = runningTime, type = "sfx", value = sfxItem });
-                        sfxHoldDuration += 3.0;
+                        sfxHoldDuration += 2.0;
                     }
                 }
 
-                // If narration follows the SFX, delay speech so it plays after the 3.0s window
                 if (sfxHoldDuration > 0 && !string.IsNullOrEmpty(seg.SpeechText))
                 {
                     string sfxPauseWav = Path.Combine(sessionDir, $"sfx_hold_{seg.Index}.wav");
@@ -314,7 +290,7 @@ namespace PodcastEngine.Api.Services
                     }
                 }
 
-                // 4. Visual directives (Aligned directly to when narration begins)
+                // Visual Directives
                 if (!string.IsNullOrEmpty(seg.Tone) && seg.Tone != "neutral")
                     timeline.Add(new TimelineEvent { time = runningTime, type = "tone", value = seg.Tone });
                 if (!string.IsNullOrEmpty(seg.Cam))
@@ -323,6 +299,12 @@ namespace PodcastEngine.Api.Services
                     timeline.Add(new TimelineEvent { time = runningTime, type = "emotion", value = seg.Emotion });
                 if (!string.IsNullOrEmpty(seg.Gesture))
                     timeline.Add(new TimelineEvent { time = runningTime, type = "gesture", value = seg.Gesture });
+
+                if (!string.IsNullOrEmpty(seg.Bg))
+                    timeline.Add(new TimelineEvent { time = runningTime, type = "bg", value = seg.Bg });
+                if (!string.IsNullOrEmpty(seg.Icon))
+                    timeline.Add(new TimelineEvent { time = runningTime, type = "icon", value = seg.Icon });
+
                 if (!string.IsNullOrEmpty(seg.LowerThird))
                     timeline.Add(new TimelineEvent { time = runningTime, type = "lowerthird", value = seg.LowerThird });
 
@@ -331,13 +313,22 @@ namespace PodcastEngine.Api.Services
                     timeline.Add(new TimelineEvent { time = runningTime, type = "show", value = seg.Show, position = seg.ShowPos });
                     hasActiveOverlay = true;
                 }
-                else if (seg.Hide || hasActiveOverlay)
+                else if (seg.HideTargets.Count > 0)
+                {
+                    foreach (var ht in seg.HideTargets)
+                    {
+                        string val = ht;
+                        if (val == "show" || val == "overlay") val = "";
+                        timeline.Add(new TimelineEvent { time = runningTime, type = "hide", value = val });
+                        if (string.IsNullOrEmpty(val)) hasActiveOverlay = false;
+                    }
+                }
+                else if (hasActiveOverlay)
                 {
                     timeline.Add(new TimelineEvent { time = runningTime, type = "hide", value = "" });
                     hasActiveOverlay = false;
                 }
 
-                // 5. Spoken narration audio track assembly
                 if (!string.IsNullOrEmpty(seg.SpeechText) && File.Exists(seg.WavPath))
                 {
                     timeline.Add(new TimelineEvent { time = runningTime, type = "text", value = seg.SpeechText });
@@ -357,11 +348,10 @@ namespace PodcastEngine.Api.Services
                 }
             }
 
-            // Auto-extend audio timeline if trailing stinger or SFX exceeds speech duration
             double maxAudioEnd = runningTime;
             if (sfxCues.Count > 0)
             {
-                double lastCueEnd = sfxCues.Max(c => c.Time) + 3.8;
+                double lastCueEnd = sfxCues.Max(c => c.Time) + 3.2;
                 if (lastCueEnd > maxAudioEnd) maxAudioEnd = lastCueEnd;
             }
 
@@ -394,14 +384,16 @@ namespace PodcastEngine.Api.Services
             var timelineTask = File.WriteAllTextAsync(timelinePath, JsonSerializer.Serialize(timeline, new JsonSerializerOptions { WriteIndented = true }), new UTF8Encoding(false), ct);
 
             string bgmMasterWav = Path.Combine(sessionDir, "bgm_composed.wav");
+            string ambienceMasterWav = Path.Combine(sessionDir, "ambience_composed.wav");
             string masterMixWav = Path.Combine(sessionDir, "master_mix.wav");
 
-            _progress.Report(jobId, 3, 0, 50, "[FFmpeg] Building dynamic soundtrack and sidechain ducking...");
+            _progress.Report(jobId, 3, 0, 50, "[FFmpeg] Building broadcast acoustics, ambience bed, and sidechain ducking...");
             var audioMasterTask = Task.Run(async () =>
             {
                 await BuildCompositeBgmTrackAsync(bgmCues, runningTime, bgmMasterWav, ct);
-                await ApplySidechainDuckingAndSfxAsync(rawSpeechWav, bgmMasterWav, sfxCues, masterMixWav, jobId, ct);
-                _progress.Report(jobId, 3, 100, 70, "[FFmpeg] Sidechain ducking and broadcast mastering applied.");
+                await BuildCompositeAmbienceTrackAsync(ambienceCues, runningTime, ambienceMasterWav, ct);
+                await ApplyBroadcastMasteringMixAsync(rawSpeechWav, bgmMasterWav, ambienceMasterWav, sfxCues, masterMixWav, jobId, ct);
+                _progress.Report(jobId, 3, 100, 70, "[FFmpeg] Broadcast room warmth, dynamic swells, and mastering applied.");
             }, ct);
 
             await Task.WhenAll(timelineTask, audioMasterTask);
@@ -447,13 +439,13 @@ namespace PodcastEngine.Api.Services
             p.WaitForExit();
         }
 
-        private string ClampSfxAudio(string inputPath, string outputPath, double maxSec = 3.0)
+        private string ClampSfxAudio(string inputPath, string outputPath, double maxSec = 2.2)
         {
-            double fadeStart = Math.Max(0.1, maxSec - 0.5);
+            double fadeStart = Math.Max(0.1, maxSec - 0.4);
             var psi = new ProcessStartInfo
             {
                 FileName = "ffmpeg",
-                Arguments = $"-y -i \"{inputPath}\" -t {maxSec.ToString(CultureInfo.InvariantCulture)} -af \"afade=t=out:st={fadeStart.ToString(CultureInfo.InvariantCulture)}:d=0.5\" -ar 24000 -ac 1 \"{outputPath}\"",
+                Arguments = $"-y -i \"{inputPath}\" -t {maxSec.ToString(CultureInfo.InvariantCulture)} -af \"afade=t=out:st={fadeStart.ToString(CultureInfo.InvariantCulture)}:d=0.4\" -ar 24000 -ac 1 \"{outputPath}\"",
                 CreateNoWindow = true,
                 UseShellExecute = false,
                 RedirectStandardError = true
@@ -616,6 +608,29 @@ namespace PodcastEngine.Api.Services
             return Path.Combine(musicFolder, "lofi.mp3");
         }
 
+        private string ResolveAmbienceFile(string ambName)
+        {
+            string ambFolder = Path.Combine(_assetsBase, "ambience");
+            string sfxFolder = Path.Combine(_assetsBase, "sfx");
+            string normalized = ambName.ToLower().Trim().Replace(" ", "_").Replace("-", "_");
+
+            string[] candidates = new[]
+            {
+                Path.Combine(ambFolder, $"{normalized}.mp3"),
+                Path.Combine(ambFolder, $"{normalized}.wav"),
+                Path.Combine(sfxFolder, $"{normalized}.mp3"),
+                Path.Combine(sfxFolder, $"ambience_{normalized}.mp3"),
+                Path.Combine(ambFolder, "stadium_murmur.mp3"),
+                Path.Combine(ambFolder, "room_tone.mp3")
+            };
+
+            foreach (var path in candidates)
+            {
+                if (File.Exists(path)) return path;
+            }
+            return candidates[0];
+        }
+
         private async Task BuildCompositeBgmTrackAsync(List<BgmCue> bgmCues, double totalDuration, string outputBgmWav, CancellationToken ct)
         {
             string musicFolder = Path.Combine(_assetsBase, "music");
@@ -678,13 +693,46 @@ namespace PodcastEngine.Api.Services
             foreach (var f in segmentWavs) { if (File.Exists(f)) File.Delete(f); }
         }
 
-        private async Task ApplySidechainDuckingAndSfxAsync(string speechWav, string bgmTrackWav, List<SfxCue> sfxCues, string outputWav, string jobId, CancellationToken ct)
+        private async Task BuildCompositeAmbienceTrackAsync(List<AmbienceCue> ambCues, double totalDuration, string outputAmbWav, CancellationToken ct)
+        {
+            string durStr = totalDuration.ToString("F2", CultureInfo.InvariantCulture);
+            string? firstValid = ambCues.FirstOrDefault(c => File.Exists(c.FilePath))?.FilePath;
+
+            if (firstValid != null && File.Exists(firstValid))
+            {
+                var psi = new ProcessStartInfo
+                {
+                    FileName = "ffmpeg",
+                    Arguments = $"-y -stream_loop -1 -i \"{firstValid}\" -t {durStr} -af \"afade=t=in:st=0:d=0.5,afade=t=out:st={Math.Max(0, totalDuration - 0.5).ToString("F2", CultureInfo.InvariantCulture)}:d=0.5,volume=0.22\" -c:a pcm_s16le -ar 24000 -ac 1 \"{outputAmbWav}\"",
+                    CreateNoWindow = true,
+                    UseShellExecute = false,
+                    RedirectStandardError = true
+                };
+                using var p = Process.Start(psi)!;
+                await p.WaitForExitAsync(ct);
+            }
+            else
+            {
+                var psi = new ProcessStartInfo
+                {
+                    FileName = "ffmpeg",
+                    Arguments = $"-y -f lavfi -i \"anoisesrc=d={durStr}:c=pink:r=24000:a=0.0007\" -af \"lowpass=f=1100,highpass=f=80,volume=0.25\" -c:a pcm_s16le -ar 24000 -ac 1 \"{outputAmbWav}\"",
+                    CreateNoWindow = true,
+                    UseShellExecute = false,
+                    RedirectStandardError = true
+                };
+                using var p = Process.Start(psi)!;
+                await p.WaitForExitAsync(ct);
+            }
+        }
+
+        private async Task ApplyBroadcastMasteringMixAsync(string speechWav, string bgmTrackWav, string ambTrackWav, List<SfxCue> sfxCues, string outputWav, string jobId, CancellationToken ct)
         {
             var sb = new StringBuilder();
             var filterSb = new StringBuilder();
 
-            sb.Append($"-y -i \"{speechWav}\" -i \"{bgmTrackWav}\" ");
-            int inputIndex = 2;
+            sb.Append($"-y -i \"{speechWav}\" -i \"{bgmTrackWav}\" -i \"{ambTrackWav}\" ");
+            int inputIndex = 3;
 
             var sfxInputs = new List<(int Idx, double Time)>();
             foreach (var cue in sfxCues)
@@ -696,25 +744,23 @@ namespace PodcastEngine.Api.Services
                 }
             }
 
-            // CR-014 Mobile Voice Sweetening: 85Hz HPF, 250Hz cut, 3.2kHz presence boost
-            filterSb.Append("[0:a]highpass=f=85,equalizer=f=250:width_type=q:width=1.0:gain=-1.5,equalizer=f=3200:width_type=q:width=1.2:gain=3.5[speechPolished];");
-            filterSb.Append("[1:a]volume=0.22[bgmNorm];");
-            filterSb.Append("[bgmNorm][speechPolished]sidechaincompress=threshold=0.07:ratio=7:attack=15:release=320[duckedBgm];");
+            filterSb.Append("[0:a]highpass=f=75,equalizer=f=190:width_type=q:width=1.1:gain=2.6,equalizer=f=420:width_type=q:width=1.0:gain=-1.2,equalizer=f=3400:width_type=q:width=1.2:gain=2.2,equalizer=f=11000:width_type=q:width=0.8:gain=1.5,aecho=0.96:0.82:18|28:0.08|0.05[speechPolished];");
+            filterSb.Append("[1:a]volume=0.25[bgmNorm];");
+            filterSb.Append("[bgmNorm][speechPolished]sidechaincompress=threshold=0.05:ratio=8:attack=22:release=720[duckedBgm];");
+            filterSb.Append("[2:a]volume=0.20[ambBed];");
 
-            var mixInputs = new List<string> { "[speechPolished]", "[duckedBgm]" };
+            var mixInputs = new List<string> { "[speechPolished]", "[duckedBgm]", "[ambBed]" };
 
             for (int i = 0; i < sfxInputs.Count; i++)
             {
                 var item = sfxInputs[i];
                 long delayMs = (long)(item.Time * 1000);
-                filterSb.Append($"[{item.Idx}:a]aresample=24000,aformat=channel_layouts=mono,adelay=delays={delayMs}:all=1,volume=0.85[sfx{i}];");
+                filterSb.Append($"[{item.Idx}:a]aresample=24000,aformat=channel_layouts=mono,adelay=delays={delayMs}:all=1,volume=0.52[sfx{i}];");
                 mixInputs.Add($"[sfx{i}]");
             }
 
             string combined = string.Join("", mixInputs);
             filterSb.Append($"{combined}amix=inputs={mixInputs.Count}:duration=first:dropout_transition=2[mixedRaw];");
-            
-            // Broadcast Loudness Normalization: -14 LUFS / -1.0 dB True Peak
             filterSb.Append("[mixedRaw]loudnorm=I=-14:TP=-1.0:LRA=9[masterAudio]");
 
             sb.Append($"-filter_complex \"{filterSb}\" -map \"[masterAudio]\" -c:a pcm_s16le -ar 24000 -ac 1 \"{outputWav}\"");

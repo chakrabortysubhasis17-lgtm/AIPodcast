@@ -64,7 +64,11 @@ const createHtmlContent = (avatarPath) => `
 
         let renderer, scene, camera, vrm;
         let hudScene, hudCamera;
+        let bgScene, bgCamera, bgMesh2D, bgMat2D;
+        let studioBgGroup, studioFloorMesh, studioWallMesh, floorShadow;
         let overlayMesh, overlayMat;
+        let iconMesh, iconMat, iconCanvas, iconContext, iconTexture;
+        let currentIconVal = "";
         let lowerThirdMesh, ltMat, ltCanvas, ltContext, ltTexture;
         let overlayTextures = {};
         let currentLtText = "";
@@ -107,16 +111,31 @@ const createHtmlContent = (avatarPath) => `
         const POS_CLOSE = new THREE.Vector3(-0.22, 1.28, 1.15);
         const LOOK_CLOSE = new THREE.Vector3(-0.22, 1.25, 0);
 
+        function setupBackgroundHUD() {
+            bgScene = new THREE.Scene();
+            bgCamera = new THREE.OrthographicCamera(0, 1920, 1080, 0, -10, 10);
+            bgCamera.position.set(0, 0, 5);
+            bgCamera.lookAt(0, 0, 0);
+
+            bgMat2D = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthTest: false, depthWrite: false });
+            bgMesh2D = new THREE.Mesh(new THREE.PlaneGeometry(1920, 1080), bgMat2D);
+            bgMesh2D.position.set(960, 540, 0);
+            bgScene.add(bgMesh2D);
+        }
+
         function createStudioEnvironment() {
+            studioBgGroup = new THREE.Group();
+            scene.add(studioBgGroup);
+
             const floorCanvas = document.createElement('canvas');
             floorCanvas.width = 1024; floorCanvas.height = 1024;
             const fCtx = floorCanvas.getContext('2d');
             const fGrad = fCtx.createRadialGradient(512, 512, 80, 512, 512, 500);
             fGrad.addColorStop(0, '#ffffff'); fGrad.addColorStop(0.70, '#f1f5f9'); fGrad.addColorStop(1, '#e2e8f0');
             fCtx.fillStyle = fGrad; fCtx.fillRect(0, 0, 1024, 1024);
-            const floorMesh = new THREE.Mesh(new THREE.PlaneGeometry(30, 30), new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(floorCanvas) }));
-            floorMesh.rotation.x = -Math.PI / 2;
-            scene.add(floorMesh);
+            studioFloorMesh = new THREE.Mesh(new THREE.PlaneGeometry(30, 30), new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(floorCanvas) }));
+            studioFloorMesh.rotation.x = -Math.PI / 2;
+            studioBgGroup.add(studioFloorMesh);
 
             const shadowCanvas = document.createElement('canvas');
             shadowCanvas.width = 512; shadowCanvas.height = 512;
@@ -125,7 +144,7 @@ const createHtmlContent = (avatarPath) => `
             sGrad.addColorStop(0, 'rgba(15, 23, 42, 0.55)'); sGrad.addColorStop(0.40, 'rgba(30, 41, 59, 0.25)');
             sGrad.addColorStop(0.75, 'rgba(51, 65, 85, 0.06)'); sGrad.addColorStop(1, 'rgba(255, 255, 255, 0.0)');
             sCtx.fillStyle = sGrad; sCtx.fillRect(0, 0, 512, 512);
-            const floorShadow = new THREE.Mesh(new THREE.PlaneGeometry(1.5, 0.95), new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(shadowCanvas), transparent: true, opacity: 0.85, depthWrite: false }));
+            floorShadow = new THREE.Mesh(new THREE.PlaneGeometry(1.5, 0.95), new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(shadowCanvas), transparent: true, opacity: 0.85, depthWrite: false }));
             floorShadow.rotation.x = -Math.PI / 2; floorShadow.position.set(0.04, 0.002, 0.02);
             scene.add(floorShadow);
 
@@ -135,9 +154,9 @@ const createHtmlContent = (avatarPath) => `
             const grad = ctx.createLinearGradient(0, 1080, 0, 0);
             grad.addColorStop(0, '#e2e8f0'); grad.addColorStop(0.40, '#f8fafc'); grad.addColorStop(1, '#ffffff');
             ctx.fillStyle = grad; ctx.fillRect(0, 0, 1920, 1080);
-            const bgMesh = new THREE.Mesh(new THREE.PlaneGeometry(30, 16), new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(bgCanvas) }));
-            bgMesh.position.set(0, 6.0, -5.0);
-            scene.add(bgMesh);
+            studioWallMesh = new THREE.Mesh(new THREE.PlaneGeometry(30, 16), new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(bgCanvas) }));
+            studioWallMesh.position.set(0, 6.0, -5.0);
+            studioBgGroup.add(studioWallMesh);
         }
 
         function setupOrthographicHUD() {
@@ -155,11 +174,60 @@ const createHtmlContent = (avatarPath) => `
             lowerThirdMesh.renderOrder = 100;
             hudScene.add(lowerThirdMesh);
 
+            iconCanvas = document.createElement('canvas');
+            iconCanvas.width = 300; iconCanvas.height = 300;
+            iconContext = iconCanvas.getContext('2d');
+            iconTexture = new THREE.CanvasTexture(iconCanvas);
+            iconMat = new THREE.MeshBasicMaterial({ map: iconTexture, transparent: true, opacity: 0, depthTest: false, depthWrite: false });
+            iconMesh = new THREE.Mesh(new THREE.PlaneGeometry(220, 220), iconMat);
+            iconMesh.position.set(320, 560, 2);
+            iconMesh.renderOrder = 95;
+            hudScene.add(iconMesh);
+
             overlayMat = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthTest: false, depthWrite: false });
             overlayMesh = new THREE.Mesh(new THREE.PlaneGeometry(540, 540), overlayMat);
             overlayMesh.position.set(70 + 270, (1080 - 70) - 270, 1);
             overlayMesh.renderOrder = 90;
             hudScene.add(overlayMesh);
+        }
+
+        function renderIconBadge(symbol) {
+            iconContext.clearRect(0, 0, 300, 300);
+            const cx = 150, cy = 150, r = 120;
+
+            iconContext.shadowColor = 'rgba(15, 23, 42, 0.22)';
+            iconContext.shadowBlur = 24;
+            iconContext.shadowOffsetY = 8;
+
+            iconContext.beginPath();
+            iconContext.arc(cx, cy, r, 0, Math.PI * 2);
+            iconContext.fillStyle = 'rgba(255, 255, 255, 0.95)';
+            iconContext.fill();
+
+            iconContext.shadowColor = 'transparent';
+            iconContext.lineWidth = 4;
+            iconContext.strokeStyle = 'rgba(203, 213, 225, 0.85)';
+            iconContext.stroke();
+
+            iconContext.beginPath();
+            iconContext.arc(cx, cy, r - 6, 0, Math.PI * 2);
+            iconContext.lineWidth = 1.5;
+            iconContext.strokeStyle = 'rgba(56, 189, 248, 0.40)';
+            iconContext.stroke();
+
+            const text = (symbol || '').trim();
+            iconContext.textAlign = 'center';
+            iconContext.textBaseline = 'middle';
+            if (text.length <= 2) {
+                iconContext.font = 'bold 110px "Segoe UI Emoji", "Noto Color Emoji", sans-serif';
+                iconContext.fillStyle = '#0f172a';
+                iconContext.fillText(text, cx, cy + 6);
+            } else {
+                iconContext.font = 'bold 48px sans-serif';
+                iconContext.fillStyle = '#e11d48';
+                iconContext.fillText(text.length > 6 ? text.substring(0, 5) + '..' : text, cx, cy);
+            }
+            iconTexture.needsUpdate = true;
         }
 
         function renderLowerThirdCanvas(title) {
@@ -177,7 +245,7 @@ const createHtmlContent = (avatarPath) => `
             ltContext.fillStyle = '#ffffff'; ltContext.font = 'bold 15px sans-serif'; ltContext.fillText('BEINGABONG', 50, 48);
 
             ltContext.fillStyle = '#f8fafc'; ltContext.font = 'bold 32px sans-serif';
-            const clean = (title || '').replace(/\\[.*?\\]/g, '').trim();
+            const clean = (title || '').replace(/\[.*?\]/g, '').trim();
             ltContext.fillText(clean.length > 48 ? clean.substring(0, 45) + '...' : clean, 38, 102);
 
             ltContext.fillStyle = '#38bdf8'; ltContext.font = '600 14px monospace'; ltContext.fillText('SPECIAL BROADCAST FEATURE', 38, 132);
@@ -194,7 +262,7 @@ const createHtmlContent = (avatarPath) => `
                         tex.needsUpdate = true;
                         const clean = key.toLowerCase().trim();
                         overlayTextures[clean] = tex;
-                        overlayTextures[clean.replace(/\\.[^/.]+$/, "")] = tex;
+                        overlayTextures[clean.replace(/\.[^/.]+$/, "")] = tex;
                         res();
                     };
                     img.onerror = () => res();
@@ -292,6 +360,7 @@ const createHtmlContent = (avatarPath) => `
             scene.add(camera);
 
             createStudioEnvironment();
+            setupBackgroundHUD();
             setupOrthographicHUD();
 
             scene.add(new THREE.AmbientLight(0xffffff, 0.55));
@@ -306,16 +375,18 @@ const createHtmlContent = (avatarPath) => `
             window.__ready = true;
         }
 
-        function poseFingersCorrect(isLeft, isPointing) {
+        function poseFingersCorrect(isLeft, isPointing, isSpeaking) {
             const isVRM0 = window.__isVRM0;
             const side = isLeft ? 'left' : 'right';
+            const curlMod = isSpeaking ? 0.08 : 0.0;
+
             if (isVRM0) {
                 if (isLeft) {
                     const configs = [
-                        { name: 'Index', ySpread: -0.015, pZ: 0.40, iZ: 0.46, dZ: 0.28 },
-                        { name: 'Middle', ySpread: 0.000, pZ: 0.46, iZ: 0.52, dZ: 0.32 },
-                        { name: 'Ring', ySpread: 0.015, pZ: 0.50, iZ: 0.58, dZ: 0.35 },
-                        { name: 'Little', ySpread: 0.030, pZ: 0.56, iZ: 0.64, dZ: 0.38 }
+                        { name: 'Index', ySpread: -0.015, pZ: 0.35 + curlMod, iZ: 0.42, dZ: 0.25 },
+                        { name: 'Middle', ySpread: 0.000, pZ: 0.42 + curlMod, iZ: 0.48, dZ: 0.30 },
+                        { name: 'Ring', ySpread: 0.015, pZ: 0.46 + curlMod, iZ: 0.52, dZ: 0.32 },
+                        { name: 'Little', ySpread: 0.030, pZ: 0.50 + curlMod, iZ: 0.58, dZ: 0.35 }
                     ];
                     configs.forEach(c => {
                         const p = vrm.humanoid.getBoneNode(side + c.name + 'Proximal');
@@ -333,10 +404,10 @@ const createHtmlContent = (avatarPath) => `
                     if (td) td.rotation.set(0, 0, 0.15);
                 } else {
                     const configs = [
-                        { name: 'Index', ySpread: 0.015, pZ: isPointing ? 0.00 : -0.40, iZ: isPointing ? 0.00 : -0.46, dZ: isPointing ? 0.00 : -0.28 },
-                        { name: 'Middle', ySpread: 0.000, pZ: isPointing ? -0.75 : -0.46, iZ: isPointing ? -0.85 : -0.52, dZ: isPointing ? -0.55 : -0.32 },
-                        { name: 'Ring', ySpread: -0.015, pZ: isPointing ? -0.80 : -0.50, iZ: isPointing ? -0.90 : -0.58, dZ: isPointing ? -0.60 : -0.35 },
-                        { name: 'Little', ySpread: -0.030, pZ: isPointing ? -0.85 : -0.56, iZ: isPointing ? -0.95 : -0.64, dZ: isPointing ? -0.65 : -0.38 }
+                        { name: 'Index', ySpread: 0.015, pZ: isPointing ? 0.00 : (-0.35 - curlMod), iZ: isPointing ? 0.00 : -0.42, dZ: isPointing ? 0.00 : -0.25 },
+                        { name: 'Middle', ySpread: 0.000, pZ: isPointing ? -0.75 : (-0.42 - curlMod), iZ: isPointing ? -0.85 : -0.48, dZ: isPointing ? -0.55 : -0.30 },
+                        { name: 'Ring', ySpread: -0.015, pZ: isPointing ? -0.80 : (-0.46 - curlMod), iZ: isPointing ? -0.90 : -0.52, dZ: isPointing ? -0.60 : -0.32 },
+                        { name: 'Little', ySpread: -0.030, pZ: isPointing ? -0.85 : (-0.50 - curlMod), iZ: isPointing ? -0.95 : -0.58, dZ: isPointing ? -0.65 : -0.35 }
                     ];
                     configs.forEach(c => {
                         const p = vrm.humanoid.getBoneNode(side + c.name + 'Proximal');
@@ -356,10 +427,10 @@ const createHtmlContent = (avatarPath) => `
             } else {
                 if (isLeft) {
                     const configs = [
-                        { name: 'Index', ySpread: -0.015, pZ: -0.35, iZ: -0.40, dZ: -0.25 },
-                        { name: 'Middle', ySpread: 0.000, pZ: -0.40, iZ: -0.45, dZ: -0.28 },
-                        { name: 'Ring', ySpread: 0.015, pZ: -0.44, iZ: -0.50, dZ: -0.30 },
-                        { name: 'Little', ySpread: 0.030, pZ: -0.48, iZ: -0.55, dZ: -0.32 }
+                        { name: 'Index', ySpread: -0.015, pZ: -0.32, iZ: -0.38, dZ: -0.22 },
+                        { name: 'Middle', ySpread: 0.000, pZ: -0.38, iZ: -0.42, dZ: -0.25 },
+                        { name: 'Ring', ySpread: 0.015, pZ: -0.42, iZ: -0.46, dZ: -0.28 },
+                        { name: 'Little', ySpread: 0.030, pZ: -0.45, iZ: -0.50, dZ: -0.30 }
                     ];
                     configs.forEach(c => {
                         const p = vrm.humanoid.getBoneNode(side + c.name + 'Proximal');
@@ -377,10 +448,10 @@ const createHtmlContent = (avatarPath) => `
                     if (td) td.rotation.set(0, 0, -0.12);
                 } else {
                     const configs = [
-                        { name: 'Index', ySpread: 0.015, pZ: isPointing ? 0.00 : 0.35, iZ: isPointing ? 0.00 : 0.40, dZ: isPointing ? 0.00 : 0.25 },
-                        { name: 'Middle', ySpread: 0.000, pZ: isPointing ? 0.70 : 0.40, iZ: isPointing ? 0.80 : 0.45, dZ: isPointing ? 0.50 : 0.28 },
-                        { name: 'Ring', ySpread: -0.015, pZ: isPointing ? 0.75 : 0.44, iZ: isPointing ? 0.85 : 0.50, dZ: isPointing ? 0.55 : 0.30 },
-                        { name: 'Little', ySpread: -0.030, pZ: isPointing ? 0.80 : 0.48, iZ: isPointing ? 0.90 : 0.55, dZ: isPointing ? 0.60 : 0.32 }
+                        { name: 'Index', ySpread: 0.015, pZ: isPointing ? 0.00 : 0.32, iZ: isPointing ? 0.00 : 0.38, dZ: isPointing ? 0.00 : 0.22 },
+                        { name: 'Middle', ySpread: 0.000, pZ: isPointing ? 0.70 : 0.38, iZ: isPointing ? 0.80 : 0.42, dZ: isPointing ? 0.50 : 0.25 },
+                        { name: 'Ring', ySpread: -0.015, pZ: isPointing ? 0.75 : 0.42, iZ: isPointing ? 0.85 : 0.46, dZ: isPointing ? 0.55 : 0.28 },
+                        { name: 'Little', ySpread: -0.030, pZ: isPointing ? 0.80 : 0.45, iZ: isPointing ? 0.90 : 0.50, dZ: isPointing ? 0.60 : 0.30 }
                     ];
                     configs.forEach(c => {
                         const p = vrm.humanoid.getBoneNode(side + c.name + 'Proximal');
@@ -402,23 +473,26 @@ const createHtmlContent = (avatarPath) => `
 
         const visemeMap = { 'B': 'i', 'C': 'e', 'D': 'a', 'E': 'u', 'F': 'o', 'G': 'i', 'H': 'a' };
 
-        window.updateFrame = function(t, phoneme, expr, tone, camMode, camAge, activeOverlay, overlayPos, activeGesture, gestAge, ltTitle, ltAge) {
+        window.updateFrame = function(t, phoneme, expr, tone, camMode, camAge, activeOverlay, overlayPos, activeGesture, gestAge, ltTitle, ltAge, activeBg, activeIcon) {
             if (!vrm) return;
             const isSpeaking = phoneme && phoneme !== 'X';
             const isVRM0 = window.__isVRM0;
             const persona = isVRM0 ? PERSONA_VRM0 : PERSONA_VRM1;
             const lerp = (a, b, alpha) => a + (b - a) * alpha;
 
-            // CR-013 Demeanor Kinematics Modifiers (Declared at top to prevent TDZ error)
             let toneHipsZ = 0.0, toneSpineX = 0.0, toneChestX = 0.0, toneHeadPitch = 0.0, joyBaseline = persona.baselineJoy;
+            let toneArmSplay = 0.0;
             if (tone === 'friendly') {
                 joyBaseline = 0.30;
                 toneHeadPitch = Math.sin(t * 2.8) * 0.012;
+                toneArmSplay = 0.04;
             } else if (tone === 'formal') {
                 toneSpineX = -0.012;
                 toneHipsZ = -persona.hipTiltBase * 0.5;
+                toneArmSplay = -0.03;
             } else if (tone === 'informal') {
                 toneHipsZ = 0.030;
+                toneArmSplay = 0.06;
             } else if (tone === 'authoritative') {
                 toneChestX = 0.022;
                 toneHeadPitch = isSpeaking ? (Math.sin(t * 3.5) * -0.018) : 0;
@@ -540,28 +614,77 @@ const createHtmlContent = (avatarPath) => `
             window.__pointingWeight = lerp(window.__pointingWeight, shouldPoint ? 1.0 : 0.0, 0.08);
             const pw = window.__pointingWeight;
 
+            const gestWave1 = Math.sin(t * 2.3);
+            const gestWave2 = Math.sin(t * 3.6 + 0.6);
+            const speechPulse = isSpeaking ? (gestWave1 * 0.055 + gestWave2 * 0.030) : (Math.sin(t * 0.8) * 0.008);
+            const subPulse = isSpeaking ? (Math.sin(t * 2.7 + 1.2) * 0.035) : 0.0;
+
             if (isVRM0) {
+                const rArmBaseX = -0.26 + breathCycle * 0.005 + speechPulse * 0.6;
+                const rArmBaseY = -0.28 + toneArmSplay;
+                const rArmBaseZ = -1.18 - speechPulse * 0.4;
+                const rElbowBaseX = -1.12 - speechPulse * 1.2;
+                const rElbowBaseY = 0.38 + subPulse;
+                const rElbowBaseZ = -0.28;
+                const rHandBaseX = 0.18 + subPulse * 0.8;
+                const rHandBaseY = 0.22;
+                const rHandBaseZ = -0.28;
+
+                const rArmPointX = 0.08;
+                const rArmPointY = 0.28;
+                const rArmPointZ = -0.52;
+                const rElbowPointX = -0.36;
+                const rElbowPointY = 0.16;
+                const rElbowPointZ = -0.12;
+                const rHandPointX = 0.08;
+                const rHandPointY = 0.18;
+                const rHandPointZ = -0.16;
+
                 if (rArm && rElbow) {
-                    rArm.rotation.set(lerp(-0.16 + breathCycle * 0.005, 0.32, pw), lerp(-0.20, 0.38, pw), lerp(-1.24, 0.28, pw));
-                    rElbow.rotation.set(lerp(-0.92, -0.10, pw), lerp(0.35, 0.0, pw), lerp(-0.18, 0.0, pw));
-                    if (rHand) rHand.rotation.set(lerp(0.12, 0.0, pw), lerp(0.16, 0.0, pw), lerp(-0.24, 0.0, pw));
+                    rArm.rotation.set(lerp(rArmBaseX, rArmPointX, pw), lerp(rArmBaseY, rArmPointY, pw), lerp(rArmBaseZ, rArmPointZ, pw));
+                    rElbow.rotation.set(lerp(rElbowBaseX, rElbowPointX, pw), lerp(rElbowBaseY, rElbowPointY, pw), lerp(rElbowBaseZ, rElbowPointZ, pw));
+                    if (rHand) rHand.rotation.set(lerp(rHandBaseX, rHandPointX, pw), lerp(rHandBaseY, rHandPointY, pw), lerp(rHandBaseZ, rHandPointZ, pw));
                 }
-                if (lArm) lArm.rotation.set(-0.16 + breathCycle * 0.005, 0.20, 1.24);
-                if (lElbow) lElbow.rotation.set(-0.92, -0.35, 0.18);
-                if (lHand) lHand.rotation.set(0.12, -0.16, 0.24);
+
+                const lSpeechPulse = speechPulse * 0.45;
+                if (lArm) lArm.rotation.set(-0.24 + breathCycle * 0.005 - lSpeechPulse * 0.5, 0.24 - toneArmSplay, 1.18 + lSpeechPulse * 0.3);
+                if (lElbow) lElbow.rotation.set(-1.08 - lSpeechPulse * 0.8, -0.34, 0.26);
+                if (lHand) lHand.rotation.set(0.16, -0.18, 0.24);
             } else {
+                const rArmBaseX = 0.24 + breathCycle * 0.004 + speechPulse * 0.6;
+                const rArmBaseY = -0.22 + toneArmSplay;
+                const rArmBaseZ = 1.18 - speechPulse * 0.4;
+                const rElbowBaseX = -1.05 - speechPulse * 1.1;
+                const rElbowBaseY = 0.32 + subPulse;
+                const rElbowBaseZ = 0.38;
+                const rHandBaseX = 0.16 + subPulse * 0.7;
+                const rHandBaseY = 0.18;
+                const rHandBaseZ = 0.24;
+
+                const rArmPointX = -0.14;
+                const rArmPointY = -0.22;
+                const rArmPointZ = 0.58;
+                const rElbowPointX = -0.38;
+                const rElbowPointY = 0.16;
+                const rElbowPointZ = 0.22;
+                const rHandPointX = 0.10;
+                const rHandPointY = 0.15;
+                const rHandPointZ = 0.16;
+
                 if (rArm && rElbow) {
-                    rArm.rotation.set(lerp(0.16, -0.30, pw), lerp(-0.15, -0.25, pw), lerp(1.25, 0.45, pw));
-                    rElbow.rotation.set(lerp(-0.65, -0.10, pw), lerp(0.30, 0.0, pw), lerp(0.40, 0.0, pw));
-                    if (rHand) rHand.rotation.set(lerp(0.10, 0.0, pw), lerp(0.12, 0.0, pw), lerp(0.18, 0.0, pw));
+                    rArm.rotation.set(lerp(rArmBaseX, rArmPointX, pw), lerp(rArmBaseY, rArmPointY, pw), lerp(rArmBaseZ, rArmPointZ, pw));
+                    rElbow.rotation.set(lerp(rElbowBaseX, rElbowPointX, pw), lerp(rElbowBaseY, rElbowPointY, pw), lerp(rElbowBaseZ, rElbowPointZ, pw));
+                    if (rHand) rHand.rotation.set(lerp(rHandBaseX, rHandPointX, pw), lerp(rHandBaseY, rHandPointY, pw), lerp(rHandBaseZ, rHandPointZ, pw));
                 }
-                if (lArm) lArm.rotation.set(0.16, 0.15, -1.25);
-                if (lElbow) lElbow.rotation.set(-0.65, -0.30, -0.40);
-                if (lHand) lHand.rotation.set(0.10, -0.12, -0.18);
+
+                const lSpeechPulse = speechPulse * 0.45;
+                if (lArm) lArm.rotation.set(0.22 + breathCycle * 0.004 - lSpeechPulse * 0.5, 0.20 - toneArmSplay, -1.18 + lSpeechPulse * 0.3);
+                if (lElbow) lElbow.rotation.set(-1.02 - lSpeechPulse * 0.8, -0.30, -0.36);
+                if (lHand) lHand.rotation.set(0.14, -0.15, -0.22);
             }
 
-            poseFingersCorrect(true, false);
-            poseFingersCorrect(false, pw > 0.08);
+            poseFingersCorrect(true, false, isSpeaking);
+            poseFingersCorrect(false, pw > 0.08, isSpeaking);
 
             if (isGestActive && gest.includes('nod') && head) head.rotation.x += Math.sin(gestAge * 8.0) * 0.08;
             else if (isGestActive && (gest.includes('head shake') || gest.includes('shake')) && head) head.rotation.y += Math.sin(gestAge * 7.0) * 0.12;
@@ -604,6 +727,22 @@ const createHtmlContent = (avatarPath) => `
 
             vrm.update(1 / 30);
 
+            // 1. Process 2D Fullscreen Stretched Background
+            const cleanBgKey = (activeBg || '').replace(/['"]/g, '').toLowerCase().trim();
+            const bgTex = cleanBgKey ? (overlayTextures[cleanBgKey] || overlayTextures[cleanBgKey.replace(/\.[^/.]+$/, "")]) : null;
+            if (bgTex) {
+                if (bgMat2D.map !== bgTex) {
+                    bgMat2D.map = bgTex;
+                    bgMat2D.needsUpdate = true;
+                }
+                bgMat2D.opacity = Math.min(1.0, bgMat2D.opacity + 0.15);
+                if (studioBgGroup) studioBgGroup.visible = (bgMat2D.opacity < 0.95);
+            } else {
+                bgMat2D.opacity = Math.max(0.0, bgMat2D.opacity - 0.15);
+                if (studioBgGroup) studioBgGroup.visible = true;
+            }
+
+            // 2. Process Top-Left Overlay Graphic
             const cleanKey = (activeOverlay || '').replace(/['"]/g, '').toLowerCase().trim();
             const cleanBase = cleanKey.replace(/\.[^/.]+$/, "");
             const targetTex = overlayTextures[cleanKey] || overlayTextures[cleanBase];
@@ -630,6 +769,7 @@ const createHtmlContent = (avatarPath) => `
                 overlayMat.opacity = Math.max(0.0, overlayMat.opacity - 0.15);
             }
 
+            // 3. Process Lower Third
             if (ltTitle && ltAge <= 3.0) {
                 if (ltTitle !== currentLtText) {
                     currentLtText = ltTitle;
@@ -650,9 +790,33 @@ const createHtmlContent = (avatarPath) => `
                 ltMat.opacity = 0;
             }
 
+            // 4. Process Icon / Emoji Badge
+            if (activeIcon) {
+                if (activeIcon !== currentIconVal) {
+                    currentIconVal = activeIcon;
+                    renderIconBadge(activeIcon);
+                }
+                iconMat.opacity = Math.min(1.0, iconMat.opacity + 0.15);
+                const floatBob = Math.sin(t * 3.2) * 5;
+                iconMesh.position.y = 560 + floatBob;
+            } else {
+                iconMat.opacity = Math.max(0.0, iconMat.opacity - 0.15);
+            }
+
+            // 5. Clean 3-Layer Composite Pass
             renderer.clear();
+
+            // Layer 0: Stretched 16:9 Background Quad
+            if (bgMat2D && bgMat2D.opacity > 0.005) {
+                renderer.render(bgScene, bgCamera);
+                renderer.clearDepth();
+            }
+
+            // Layer 1: 3D Scene (Avatar + Floor Shadow + Studio Wall if visible)
             renderer.render(scene, camera);
-            if (overlayMat.opacity > 0.005 || ltMat.opacity > 0.005) {
+
+            // Layer 2: 2D Orthographic HUD (Overlays, Badges, Lower-Third)
+            if (overlayMat.opacity > 0.005 || ltMat.opacity > 0.005 || iconMat.opacity > 0.005) {
                 renderer.clearDepth();
                 renderer.render(hudScene, hudCamera);
             }
@@ -667,7 +831,7 @@ const createHtmlContent = (avatarPath) => `
                 results.push(window.updateFrame(
                     c.t, c.phoneme, c.expr, c.tone, c.cam, c.camAge,
                     c.overlay, c.overlayPos, c.gesture, c.gestAge,
-                    c.ltTitle, c.ltAge
+                    c.ltTitle, c.ltAge, c.bg, c.icon
                 ));
             }
             return results;
@@ -741,11 +905,17 @@ const ensureWarmBrowser = async () => {
         ]
     });
     globalPage = await globalBrowser.newPage();
-    globalPage.setDefaultNavigationTimeout(120000);
-    globalPage.setDefaultTimeout(120000);
+    globalPage.on('pageerror', err => {
+        console.error('[Browser Runtime Error]', err.message);
+    });
+    globalPage.on('console', msg => {
+        if (msg.type() === 'error') console.error('[Browser Console Error]', msg.text());
+    });
+    globalPage.setDefaultNavigationTimeout(45000);
+    globalPage.setDefaultTimeout(45000);
     await globalPage.setViewport({ width: 1280, height: 720 });
-    await globalPage.goto(`http://127.0.0.1:${port}/`, { waitUntil: 'domcontentloaded', timeout: 120000 });
-    await globalPage.waitForFunction('window.__ready === true', { timeout: 120000 });
+    await globalPage.goto(`http://127.0.0.1:${port}/`, { waitUntil: 'domcontentloaded', timeout: 45000 });
+    await globalPage.waitForFunction('window.__ready === true', { timeout: 45000 });
     return { browser: globalBrowser, page: globalPage };
 };
 
@@ -818,14 +988,26 @@ const executeRenderJob = async (sessionDir, timelinePath, phonemesPath, audioPat
             for (const ev of timeline) {
                 if (ev.time <= currentTime) {
                     if (ev.type === 'show') { activeOverlay = ev.value; overlayPos = ev.position || 'top-left'; }
-                    else if (ev.type === 'hide') { activeOverlay = null; }
+                    else if (ev.type === 'hide' && (!ev.value || ev.value === 'overlay' || ev.value === 'show')) { activeOverlay = null; }
                 }
             }
             const lastLtEv = timeline.filter(e => e.type === 'lowerthird' && e.time <= currentTime).pop();
             const ltTitle = lastLtEv?.value || null;
             const ltAge = lastLtEv ? (currentTime - lastLtEv.time) : 999;
 
-            configs.push({ t: currentTime, tone: activeTone, phoneme, expr: activeExpr, cam: activeCam, camAge, overlay: activeOverlay, overlayPos, gesture: activeGesture, gestAge, ltTitle, ltAge });
+            let activeBg = null;
+            let activeIcon = null;
+            for (const ev of timeline) {
+                if (ev.time <= currentTime) {
+                    if (ev.type === 'bg') activeBg = ev.value;
+                    else if (ev.type === 'hide' && (!ev.value || ev.value === 'bg')) activeBg = null;
+                    
+                    if (ev.type === 'icon') activeIcon = ev.value;
+                    else if (ev.type === 'hide' && (!ev.value || ev.value === 'icon')) activeIcon = null;
+                }
+            }
+
+            configs.push({ t: currentTime, tone: activeTone, phoneme, expr: activeExpr, cam: activeCam, camAge, overlay: activeOverlay, overlayPos, gesture: activeGesture, gestAge, ltTitle, ltAge, bg: activeBg, icon: activeIcon });
         }
 
         const dataUrls = await page.evaluate((batchConfigs) => window.renderFrameBatch(batchConfigs), configs);

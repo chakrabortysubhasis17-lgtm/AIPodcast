@@ -1,4 +1,4 @@
-﻿<div class="studio-container">
+<div class="studio-container">
   <header class="studio-header">
     <div class="header-left">
       <div class="logo">🎙️ AI Podcast Studio Pro</div>
@@ -19,23 +19,41 @@
         [(ngModel)]="scriptText"
         (input)="onScriptInput()"
         (scroll)="syncEditorScroll($event)"
+        [readonly]="isRendering"
+        [style.cursor]="isRendering ? 'not-allowed' : 'text'"
         class="editor-textarea"
         spellcheck="false"
-        placeholder="Enter script with directives like [Cam: wide], [Emotion: joy], [Show: 'crest.png']..."
+        placeholder="Enter script with directives like [Cam: wide], [Bg: stadium.jpg]..."
       ></textarea>
     </div>
 
-    <!-- DYNAMIC OVERLAY ATTACHMENT SLOTS (Appears only if [Show: "..."] exists) -->
+    <!-- AVATAR SELECTION (Locked when rendering) -->
+    <div class="avatar-selection" style="margin-top: 14px; padding: 12px 16px; background: #0d131f; border: 1px solid #1e293b; border-radius: 8px; display: flex; align-items: center; gap: 20px;">
+      <span style="color: #94a3b8; font-weight: 600; font-size: 0.85rem;">👤 Select 3D Avatar:</span>
+      <label [style.opacity]="isRendering ? '0.6' : '1'" [style.cursor]="isRendering ? 'not-allowed' : 'pointer'" style="color: #f1f5f9;">
+        <input type="radio" name="avatar" value="shubo" [(ngModel)]="selectedAvatar" [disabled]="isRendering"> Shubo (Male)
+      </label>
+      <label [style.opacity]="isRendering ? '0.6' : '1'" [style.cursor]="isRendering ? 'not-allowed' : 'pointer'" style="color: #f1f5f9;">
+        <input type="radio" name="avatar" value="mina" [(ngModel)]="selectedAvatar" [disabled]="isRendering"> Mina
+      </label>
+      <label [style.opacity]="isRendering ? '0.6' : '1'" [style.cursor]="isRendering ? 'not-allowed' : 'pointer'" style="color: #f1f5f9;">
+        <input type="radio" name="avatar" value="tina" [(ngModel)]="selectedAvatar" [disabled]="isRendering"> Tina
+      </label>
+    </div>
+
+    <!-- DYNAMIC ASSET ATTACHMENT SLOTS (Locked when rendering) -->
     <div class="dynamic-overlay-section" *ngIf="requiredOverlays.length > 0">
       <div class="overlay-section-header">
         <span class="header-icon">🖼️</span>
-        <span>Detected {{ requiredOverlays.length }} Required Scene {{ requiredOverlays.length === 1 ? 'Overlay' : 'Overlays' }}:</span>
+        <span>Detected {{ requiredOverlays.length }} Required Scene {{ requiredOverlays.length === 1 ? 'Asset' : 'Assets' }}:</span>
       </div>
 
       <div class="overlay-slots-grid">
         <div class="overlay-slot" *ngFor="let item of requiredOverlays; let i = index" [class.ready]="item.file">
           <div class="slot-info">
-            <span class="slot-badge">#{{ i + 1 }}</span>
+            <span class="slot-badge" [ngStyle]="{'background': item.type === 'background' ? '#8b5cf6' : '#0284c7', 'color': '#ffffff'}">
+              {{ item.type === 'background' ? 'BG' : 'OVERLAY' }}
+            </span>
             <span class="slot-label">Attach:</span>
             <code class="slot-filename">{{ item.targetName }}</code>
           </div>
@@ -44,9 +62,9 @@
             <span class="slot-status" *ngIf="item.file">✓ {{ item.file.name }}</span>
             <span class="slot-status missing" *ngIf="!item.file">⚠️ File Missing</span>
 
-            <label class="btn-browse">
+            <label class="btn-browse" [style.pointer-events]="isRendering ? 'none' : 'auto'" [style.opacity]="isRendering ? '0.4' : '1'">
               {{ item.file ? 'Change' : 'Browse File' }}
-              <input type="file" (change)="onSingleFileSelected($event, i)" style="display:none" accept="image/*" />
+              <input type="file" (change)="onSingleFileSelected($event, i)" [disabled]="isRendering" style="display:none" accept="image/*" />
             </label>
           </div>
         </div>
@@ -61,7 +79,7 @@
           [disabled]="isRendering || !areAllOverlaysAttached()"
         >
           <span *ngIf="!isRendering && areAllOverlaysAttached()">🚀 Generate YouTube MP4</span>
-          <span *ngIf="!isRendering && !areAllOverlaysAttached()">⚠️ Attach Missing Overlays Above</span>
+          <span *ngIf="!isRendering && !areAllOverlaysAttached()">⚠️ Attach Missing Assets Above</span>
           <span *ngIf="isRendering">⚡ Rendering Episode...</span>
         </button>
 
@@ -72,7 +90,7 @@
     </div>
   </section>
 
-  <!-- 2. FULL WIDTH: Stepper, Dual Progress Bars, Execution Logs Beneath -->
+  <!-- 2. FULL WIDTH: Stepper, Dual Progress Bars, Execution Logs -->
   <section class="section-card logging-card">
     <div class="stepper-grid">
       <div *ngFor="let s of steps" class="step-card" [class.active]="currentStep === s.id && isRendering" [class.completed]="currentStep > s.id || renderStatus === 'completed'">
@@ -84,7 +102,7 @@
       ⚠️ {{ statusMessage }}
     </div>
 
-    <!-- Dual Progress Loaders -->
+    <!-- Dual Progress Loaders with Live ETA -->
     <div class="progress-section" *ngIf="isRendering || renderStatus === 'completed'">
       <div class="progress-row">
         <span class="progress-title">Overall Broadcast Progress</span>
@@ -104,7 +122,7 @@
 
       <div class="progress-meta">
         <span>Pipeline: Google TTS → Rhubarb Visemes → D3D11 Canvas Pipe → FFmpeg</span>
-        <span>Elapsed: {{ elapsedSeconds }}s</span>
+        <span>Elapsed: {{ formatDuration(elapsedSeconds) }} • ETA: ~{{ etaText }}</span>
       </div>
     </div>
 
@@ -125,10 +143,15 @@
       </div>
     </div>
 
-    <!-- Finished Video Preview Master -->
+    <!-- Rendered Master Video Preview -->
     <div class="video-preview-wrapper" *ngIf="videoUrl">
       <div class="card-title">🎬 Rendered Master Preview</div>
       <video [src]="videoUrl" controls autoplay class="studio-video-player"></video>
+      <div style="margin-top: 16px;">
+        <a [href]="videoUrl" download="podcast.mp4" style="display: inline-block; padding: 10px 24px; background: #16a34a; color: white; text-decoration: none; border-radius: 6px; font-weight: 600;">
+          ⬇️ Download MP4
+        </a>
+      </div>
     </div>
   </section>
 </div>
