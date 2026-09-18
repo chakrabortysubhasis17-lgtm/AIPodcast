@@ -404,9 +404,25 @@ const createHtmlContent = (avatarPath) => `
 
         window.updateFrame = function(t, phoneme, expr, tone, camMode, camAge, activeOverlay, overlayPos, activeGesture, gestAge, ltTitle, ltAge) {
             if (!vrm) return;
+            const isSpeaking = phoneme && phoneme !== 'X';
             const isVRM0 = window.__isVRM0;
             const persona = isVRM0 ? PERSONA_VRM0 : PERSONA_VRM1;
             const lerp = (a, b, alpha) => a + (b - a) * alpha;
+
+            // CR-013 Demeanor Kinematics Modifiers (Declared at top to prevent TDZ error)
+            let toneHipsZ = 0.0, toneSpineX = 0.0, toneChestX = 0.0, toneHeadPitch = 0.0, joyBaseline = persona.baselineJoy;
+            if (tone === 'friendly') {
+                joyBaseline = 0.30;
+                toneHeadPitch = Math.sin(t * 2.8) * 0.012;
+            } else if (tone === 'formal') {
+                toneSpineX = -0.012;
+                toneHipsZ = -persona.hipTiltBase * 0.5;
+            } else if (tone === 'informal') {
+                toneHipsZ = 0.030;
+            } else if (tone === 'authoritative') {
+                toneChestX = 0.022;
+                toneHeadPitch = isSpeaking ? (Math.sin(t * 3.5) * -0.018) : 0;
+            }
 
             const hips = vrm.humanoid.getBoneNode('hips');
             const spine = vrm.humanoid.getBoneNode('spine');
@@ -466,7 +482,7 @@ const createHtmlContent = (avatarPath) => `
                 hips.rotation.y = 0.025 + organicSway(t, 0.30, 0.70) * 0.004;
             }
             if (spine) {
-                spine.rotation.x = breathCycle * 0.008;
+                spine.rotation.x = breathCycle * 0.008 + toneSpineX;
                 spine.rotation.z = persona.spineTilt - (weightShift * 0.008);
                 spine.rotation.y = -0.015;
             }
@@ -491,21 +507,6 @@ const createHtmlContent = (avatarPath) => `
                 if (lShoulder) lShoulder.rotation.set(-0.015, -0.02, 0.025 + breathCycle * 0.004);
             }
 
-                        // CR-013 Demeanor Kinematics Modifiers
-            let toneHipsZ = 0.0, toneSpineX = 0.0, toneChestX = 0.0, toneHeadPitch = 0.0, joyBaseline = persona.baselineJoy;
-            if (tone === 'friendly') {
-                joyBaseline = 0.30;
-                toneHeadPitch = Math.sin(t * 2.8) * 0.012;
-            } else if (tone === 'formal') {
-                toneSpineX = -0.012;
-                toneHipsZ = -persona.hipTiltBase * 0.5; // neutral upright
-            } else if (tone === 'informal') {
-                toneHipsZ = 0.030; // casual weight shift
-            } else if (tone === 'authoritative') {
-                toneChestX = 0.022; // chest expansion
-                toneHeadPitch = isSpeaking ? (Math.sin(t * 3.5) * -0.018) : 0; // decisive syllable beats
-            }
-            const isSpeaking = phoneme && phoneme !== 'X';
             const targetSpeechPitch = isSpeaking ? (Math.sin(t * 2.4) * 0.016 + Math.sin(t * 1.2) * 0.010) : (Math.sin(t * 0.9) * 0.004);
             const targetSpeechYaw = isSpeaking ? (Math.sin(t * 1.6) * 0.012) : 0;
             smoothedSpeechPitch = lerp(smoothedSpeechPitch, targetSpeechPitch, 0.12);
@@ -513,7 +514,7 @@ const createHtmlContent = (avatarPath) => `
 
             const headRoll = persona.headRollBias + organicSway(t, 0.40, 0.85) * persona.headRollAmp;
             const headYaw = -0.025 + smoothedSpeechYaw + organicSway(t, 0.35, 0.70) * 0.009;
-            const headPitch = persona.headPitchBias + smoothedSpeechPitch;
+            const headPitch = persona.headPitchBias + smoothedSpeechPitch + toneHeadPitch;
             if (head) head.rotation.set(headPitch, headYaw, headRoll);
             if (neck) neck.rotation.set(headPitch * 0.35, headYaw * 0.30, headRoll * 0.30);
 
@@ -804,7 +805,7 @@ const executeRenderJob = async (sessionDir, timelinePath, phonemesPath, audioPat
 
             const activeCue = (phonemes.mouthCues || []).find(c => currentTime >= c.start && currentTime <= c.end);
             const phoneme = activeCue ? activeCue.value : 'X';
-                        const activeTone = timeline.filter(e => e.type === 'tone' && e.time <= currentTime).pop()?.value || 'neutral';
+            const activeTone = timeline.filter(e => e.type === 'tone' && e.time <= currentTime).pop()?.value || 'neutral';
             const activeExpr = timeline.filter(e => e.type === 'emotion' && e.time <= currentTime).pop()?.value || 'neutral';
             const lastCamEv = timeline.filter(e => e.type === 'cam' && e.time <= (currentTime + 0.005)).pop();
             const activeCam = lastCamEv ? lastCamEv.value : 'default';
